@@ -1,0 +1,16 @@
+{
+  "name": "TalkTalk English Reader",
+  "short_name": "TalkTalk English",
+  "description": "영어책 사진을 읽고 단어와 문장을 눌러 발음을 듣는 어린이 영어 리더",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f7fb",
+  "theme_color": "#225dd1",
+  "orientation": "any",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
