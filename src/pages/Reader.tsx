@@ -601,11 +601,6 @@ export default function Reader({ bookId, onBack }: Props) {
     pauseSpeech();
   }
 
-  function stopReading() {
-    stopSpeech();
-    finishReading();
-  }
-
   useEffect(() => {
     function syncFullscreenState() {
       const active = Boolean(document.fullscreenElement);
