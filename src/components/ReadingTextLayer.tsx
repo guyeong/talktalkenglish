@@ -8,6 +8,8 @@ interface Props {
   speechEngine: SpeechEngine;
   voicePreset: VoicePreset;
   narrationStyle: NarrationStyle;
+  bookId?: string;
+  pageId?: string;
   onSpeechError?: (message: string) => void;
 }
 
@@ -30,7 +32,7 @@ function boxStyle(bbox: { x: number; y: number; width: number; height: number })
   };
 }
 
-export default function ReadingTextLayer({ analysis, rate, showBoxes, speechEngine, voicePreset, narrationStyle, onSpeechError }: Props) {
+export default function ReadingTextLayer({ analysis, rate, showBoxes, speechEngine, voicePreset, narrationStyle, bookId, pageId, onSpeechError }: Props) {
   return (
     <div className={`coordinate-overlay ${showBoxes ? "show-boxes" : ""}`} aria-label="AI가 인식한 영어 단어">
       {analysis.sentences.map((sentence, index) => (
@@ -39,7 +41,7 @@ export default function ReadingTextLayer({ analysis, rate, showBoxes, speechEngi
           style={boxStyle(sentence.bbox)}
           key={sentence.id}
           type="button"
-          onClick={() => speakText(sentence.text, { rate, engine: speechEngine, voicePreset, kind: "sentence", narrationStyle, onError: onSpeechError })}
+          onClick={() => speakText(sentence.text, { rate, engine: speechEngine, voicePreset, kind: "sentence", narrationStyle, cacheContext: { bookId, pageId }, onError: onSpeechError })}
           aria-label={`${index + 1}번째 문장 읽기: ${sentence.text}`}
         />
       ))}
@@ -51,7 +53,7 @@ export default function ReadingTextLayer({ analysis, rate, showBoxes, speechEngi
           type="button"
           onClick={(event) => {
             event.stopPropagation();
-            speakText(word.text, { rate, engine: speechEngine, voicePreset, kind: "word", narrationStyle: "clear", onError: onSpeechError });
+            speakText(word.text, { rate, engine: "browser", voicePreset, kind: "word", narrationStyle: "clear", onError: onSpeechError });
           }}
           aria-label={`${word.text} 발음 듣기`}
         ><span>{word.text}</span></button>

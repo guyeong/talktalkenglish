@@ -26,8 +26,25 @@ function splitSentences(text: string): string[] {
   return text.replace(/\s+/g, " ").match(/[^.!?]+[.!?]+|[^.!?]+$/g)?.map((item) => item.trim()).filter(Boolean) ?? [];
 }
 
-function sentenceGapMs(): number {
-  return 500;
+function sentenceWeight(sentence: string): number {
+  const words = sentence.trim().split(/\s+/).filter(Boolean).length;
+  const commas = (sentence.match(/[,;:]/g) ?? []).length;
+  const dialogueTurns = (sentence.match(/[“”"]/g) ?? []).length / 2;
+  return Math.max(1, words + commas * 0.45 + dialogueTurns * 0.35 + 1.2);
+}
+
+function sentenceTimeline(sentences: string[]): { starts: number[]; ends: number[]; total: number } {
+  const weights = sentences.map(sentenceWeight);
+  const total = Math.max(1, weights.reduce((sum, value) => sum + value, 0));
+  let cursor = 0;
+  const starts: number[] = [];
+  const ends: number[] = [];
+  for (const weight of weights) {
+    starts.push(cursor / total);
+    cursor += weight;
+    ends.push(cursor / total);
+  }
+  return { starts, ends, total };
 }
 
 export default function Reader({ bookId, onBack }: Props) {
@@ -69,9 +86,6 @@ export default function Reader({ bookId, onBack }: Props) {
   const readingPausedRef = useRef(false);
   const storyIndexRef = useRef(0);
   const storySentencesRef = useRef<string[]>([]);
-  const storyTimer = useRef<number | null>(null);
-  const storyWaiting = useRef(false);
-  const storyNextIndex = useRef(0);
   const fullscreenRoot = useRef<HTMLElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -133,7 +147,6 @@ export default function Reader({ bookId, onBack }: Props) {
       active = false;
       stopSpeech();
       if (followTimer.current) window.clearTimeout(followTimer.current);
-      if (storyTimer.current) window.clearTimeout(storyTimer.current);
       if (recordingTimerRef.current) window.clearTimeout(recordingTimerRef.current);
       if (recordingTickRef.current) window.clearInterval(recordingTickRef.current);
       mediaRecorderRef.current?.stop();
@@ -488,48 +501,51 @@ export default function Reader({ bookId, onBack }: Props) {
       window.clearTimeout(followTimer.current);
       followTimer.current = null;
     }
-    if (storyTimer.current) {
-      window.clearTimeout(storyTimer.current);
-      storyTimer.current = null;
-    }
-    storyWaiting.current = false;
-    storyNextIndex.current = 0;
   }
 
-  function playStorySentence(index: number) {
+  function playStoryPage(index: number) {
     const sentences = storySentencesRef.current;
     if (!sentences.length || index >= sentences.length) {
       void recordCurrentPageRead();
       return;
     }
+
     const safeIndex = Math.max(0, Math.min(sentences.length - 1, index));
+    const timeline = sentenceTimeline(sentences);
+    const pageText = sentences.join("\n");
+    const fallbackText = sentences.slice(safeIndex).join(" ");
+
     storyIndexRef.current = safeIndex;
     setStorySentenceIndex(safeIndex);
     setStoryAudioProgress(0);
-    speakText(sentences[safeIndex], {
+
+    speakText(pageText, {
       rate,
       engine: speechEngine,
       voicePreset,
       kind: "story",
       narrationStyle,
+      startAtRatio: timeline.starts[safeIndex] ?? 0,
+      fallbackText,
+      cacheContext: { bookId, pageId: currentPage?.id },
       onError: handleSpeechError,
       onTimeUpdate: (current, duration) => {
-        setStoryAudioProgress(duration > 0 ? Math.min(1, current / duration) : 0);
+        if (!(duration > 0)) return;
+        const ratio = Math.max(0, Math.min(1, current / duration));
+        let activeIndex = timeline.ends.findIndex((end) => ratio < end);
+        if (activeIndex < 0) activeIndex = sentences.length - 1;
+        const start = timeline.starts[activeIndex] ?? 0;
+        const end = timeline.ends[activeIndex] ?? 1;
+        const localProgress = Math.max(0, Math.min(1, (ratio - start) / Math.max(0.001, end - start)));
+        storyIndexRef.current = activeIndex;
+        setStorySentenceIndex(activeIndex);
+        setStoryAudioProgress(localProgress);
       },
       onEnd: () => {
         if (readingPausedRef.current) return;
-        const next = safeIndex + 1;
-        if (next >= sentences.length) {
-          void recordCurrentPageRead();
-          return;
-        }
-        storyNextIndex.current = next;
-        storyWaiting.current = true;
-        storyTimer.current = window.setTimeout(() => {
-          storyTimer.current = null;
-          storyWaiting.current = false;
-          if (!readingPausedRef.current) playStorySentence(next);
-        }, sentenceGapMs());
+        setStorySentenceIndex(sentences.length - 1);
+        setStoryAudioProgress(1);
+        void recordCurrentPageRead();
       },
     });
   }
@@ -545,13 +561,7 @@ export default function Reader({ bookId, onBack }: Props) {
     setReadingMode("story");
     setReadingPaused(false);
     readingPausedRef.current = false;
-    storyWaiting.current = false;
-    storyNextIndex.current = safeIndex;
-    if (storyTimer.current) {
-      window.clearTimeout(storyTimer.current);
-      storyTimer.current = null;
-    }
-    playStorySentence(safeIndex);
+    playStoryPage(safeIndex);
   }
 
   function startStoryFromScroll(index: number) {
@@ -577,7 +587,7 @@ export default function Reader({ bookId, onBack }: Props) {
     setPracticeState("listening");
     speakText(sentence, {
       rate,
-      engine: speechEngine,
+      engine: "browser",
       voicePreset,
       kind: "sentence",
       narrationStyle: "clear",
@@ -627,7 +637,7 @@ export default function Reader({ bookId, onBack }: Props) {
     setPracticeSentence(sentence);
     followWaiting.current = false;
     speakText(sentence, {
-      rate, engine: speechEngine, voicePreset, kind: "sentence", narrationStyle: "clear", onError: handleSpeechError,
+      rate, engine: "browser", voicePreset, kind: "sentence", narrationStyle: "clear", onError: handleSpeechError,
       onEnd: () => {
         if (readingPausedRef.current) { followWaiting.current = true; return; }
         followWaiting.current = true;
@@ -664,14 +674,8 @@ export default function Reader({ bookId, onBack }: Props) {
       readingPausedRef.current = false;
 
       if (readingMode === "story") {
-        if (storyWaiting.current) {
-          const next = storyNextIndex.current;
-          storyWaiting.current = false;
-          playStorySentence(next);
-          return;
-        }
         const resumed = resumeSpeech();
-        if (!resumed) playStorySentence(storyIndexRef.current);
+        if (!resumed) playStoryPage(storyIndexRef.current);
         return;
       }
 
@@ -695,12 +699,6 @@ export default function Reader({ bookId, onBack }: Props) {
       stopPracticeRecording(true);
       followWaiting.current = true;
       setPracticeState("listening");
-      return;
-    }
-    if (readingMode === "story" && storyTimer.current) {
-      window.clearTimeout(storyTimer.current);
-      storyTimer.current = null;
-      storyWaiting.current = true;
       return;
     }
     if (followTimer.current) {
@@ -792,7 +790,7 @@ export default function Reader({ bookId, onBack }: Props) {
           <div className="reader-workspace">
             <section className="reader-stage" aria-label={`${pageIndex + 1}페이지`}>
               <ReaderImage image={currentPage?.image} title={book.title} pageNumber={pageIndex + 1}>
-                {analysis && <ReadingTextLayer analysis={analysis} rate={rate} showBoxes={showBoxes} speechEngine={speechEngine} voicePreset={voicePreset} narrationStyle={narrationStyle} onSpeechError={handleSpeechError} />}
+                {analysis && <ReadingTextLayer analysis={analysis} rate={rate} showBoxes={showBoxes} speechEngine={speechEngine} voicePreset={voicePreset} narrationStyle={narrationStyle} bookId={book.id} pageId={currentPage?.id} onSpeechError={handleSpeechError} />}
               </ReaderImage>
               <div className="reader-page-badge">{pageIndex + 1}</div>
               {(analyzing || queueRunning) && <div className="analysis-mask"><span className="analysis-spinner" />{analysisProgress?.label || "AI가 글자를 읽고 있습니다…"}{analysisProgress && <small>{analysisProgress.completed} / {analysisProgress.total}</small>}</div>}

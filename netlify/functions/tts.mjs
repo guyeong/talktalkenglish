@@ -34,7 +34,7 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: {
     "content-type": "application/json; charset=utf-8",
-    "cache-control": "private, max-age=86400",
+    "cache-control": "no-store",
   },
 });
 
@@ -83,7 +83,7 @@ function styleDirections(narrationStyle) {
       "Use a calm General American classroom pronunciation with crisp consonants, natural linking, and clearly reduced unstressed function words.",
       "Keep the pace steady and easy to shadow, roughly 135 to 150 words per minute before the user's playback-rate adjustment.",
       "Stress the important content words clearly, while keeping articles, prepositions, and auxiliary verbs lighter.",
-      "Use short audible phrase breaks at commas and clause boundaries, then a clean half-second transition between sentences supplied by the app.",
+      "Use short audible phrase breaks at commas and clause boundaries, then a clean half-second pause between complete sentences.",
       "Let statements finish with a gentle downward contour, yes-or-no questions rise clearly, and wh-questions usually fall.",
       "Quoted dialogue should sound conversational and slightly brighter than narration, but never theatrical or exaggerated.",
       "The result must sound like a polished school textbook recording rather than an audiobook performance.",
@@ -130,6 +130,7 @@ function buildInstruction({ clean, rate, kind, preset, narrationStyle }) {
     styleDirections(narrationStyle),
     "For quoted dialogue, sound like a character speaking; for unquoted text, sound like the narrator.",
     "Use the punctuation and dialogue verbs as performance cues.",
+    kind === "story" ? "Treat each complete sentence as one reading unit and leave about half a second of silence between sentences." : "Pause naturally at the end of the sentence.",
     "Never run clauses together. Leave audible space at commas, semicolons, quotation boundaries, and changes of speaker.",
     "Read the transcript exactly. Do not add, remove, explain, paraphrase, or speak any directions, labels, or audio tags.",
     "PERFORMANCE CUE:",
@@ -144,8 +145,8 @@ function friendlyError(error) {
   if (/authentication|credential|oauth|unauthenticated|api key/i.test(message)) {
     return "Gemini 인증에 실패했습니다. GEMINI_API_KEY를 확인하고 Netlify 개발 서버를 다시 시작해 주세요.";
   }
-  if (/quota|rate limit|resource exhausted/i.test(message)) {
-    return "Gemini 무료 사용 한도를 초과했습니다. 잠시 후 다시 시도해 주세요.";
+  if (/quota|rate limit|resource exhausted|429/i.test(message)) {
+    return "Gemini 요청이 잠시 많습니다. 잠시 후 고품질 음성을 다시 사용할 수 있습니다.";
   }
   if (/timeout|timed out|abort/i.test(message)) {
     return "AI 음성 생성 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.";
@@ -224,6 +225,13 @@ export default async (request) => {
       narrationStyle: safeStyle,
     });
   } catch (error) {
+    const rawMessage = error instanceof Error ? error.message : String(error ?? "");
+    if (/quota|rate limit|resource exhausted|429/i.test(rawMessage)) {
+      return json({
+        error: "Gemini 요청이 잠시 많습니다. 기기 음성으로 재생한 뒤 잠시 후 다시 시도해 주세요.",
+        retryAfterSeconds: 65,
+      }, 429);
+    }
     return json({ error: friendlyError(error) }, 500);
   }
 };

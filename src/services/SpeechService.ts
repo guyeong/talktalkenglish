@@ -1,3 +1,5 @@
+import { db } from "../db/database";
+
 export type SpeechEngine = "gemini" | "browser";
 export type SpeechKind = "word" | "sentence" | "story";
 export type VoicePreset = "us-female" | "us-male" | "uk-male" | "au-female";
@@ -26,6 +28,12 @@ export interface SpeakOptions {
   onEnd?: () => void;
   onError?: (message: string) => void;
   onTimeUpdate?: (currentTime: number, duration: number) => void;
+  /** Start a cached full-page audio track at an estimated 0-1 position. */
+  startAtRatio?: number;
+  /** Text used only when Gemini is unavailable and browser speech is used. */
+  fallbackText?: string;
+  /** Optional context used to organize persistent audio cache entries. */
+  cacheContext?: { bookId?: string; pageId?: string };
 }
 
 interface LastSpeechRequest {
@@ -43,25 +51,96 @@ let pausedAudioPosition = 0;
 let lastSpeechRequest: LastSpeechRequest | null = null;
 
 const GEMINI_TTS_COOLDOWN_KEY = "talktalk.geminiTtsCooldownUntil";
-const GEMINI_TTS_COOLDOWN_MS = 60 * 60 * 1000;
+const GEMINI_TTS_FAILURES_KEY = "talktalk.geminiTtsFailures";
+const GEMINI_TTS_REQUESTS_KEY = "talktalk.geminiTtsRecentRequests";
+const GEMINI_TTS_WINDOW_MS = 60_000;
+const GEMINI_TTS_MAX_REQUESTS_PER_WINDOW = 3;
+const GEMINI_TTS_CACHE_LIMIT_BYTES = 120 * 1024 * 1024;
+const GEMINI_TTS_CACHE_LIMIT_ENTRIES = 160;
 let quotaNoticeShown = false;
 
-function geminiTtsCooldownUntil(): number {
-  try { return Number(localStorage.getItem(GEMINI_TTS_COOLDOWN_KEY) ?? 0) || 0; }
+class GeminiTtsError extends Error {
+  status: number;
+  retryAfterSeconds: number;
+
+  constructor(message: string, status = 0, retryAfterSeconds = 0) {
+    super(message);
+    this.name = "GeminiTtsError";
+    this.status = status;
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+function readNumber(key: string): number {
+  try { return Number(localStorage.getItem(key) ?? 0) || 0; }
   catch { return 0; }
 }
 
-function geminiTtsIsCoolingDown(): boolean {
-  return Date.now() < geminiTtsCooldownUntil();
-}
-
-function startGeminiTtsCooldown(): void {
-  try { localStorage.setItem(GEMINI_TTS_COOLDOWN_KEY, String(Date.now() + GEMINI_TTS_COOLDOWN_MS)); }
+function writeNumber(key: string, value: number): void {
+  try { localStorage.setItem(key, String(value)); }
   catch { /* localStorage may be unavailable in private browsing */ }
 }
 
+function geminiTtsCooldownUntil(): number {
+  const stored = readNumber(GEMINI_TTS_COOLDOWN_KEY);
+  const maximumReasonable = Date.now() + 10 * 60 * 1000;
+  if (stored > maximumReasonable) {
+    const migrated = Date.now() + 65 * 1000;
+    writeNumber(GEMINI_TTS_COOLDOWN_KEY, migrated);
+    return migrated;
+  }
+  return stored;
+}
+
+function geminiTtsIsCoolingDown(): boolean {
+  const until = geminiTtsCooldownUntil();
+  if (until <= Date.now()) {
+    quotaNoticeShown = false;
+    return false;
+  }
+  return true;
+}
+
+function startGeminiTtsCooldown(retryAfterSeconds = 65): number {
+  const failures = Math.min(5, readNumber(GEMINI_TTS_FAILURES_KEY) + 1);
+  writeNumber(GEMINI_TTS_FAILURES_KEY, failures);
+  const adaptiveSeconds = Math.min(10 * 60, 65 * (2 ** Math.max(0, failures - 1)));
+  const delaySeconds = Math.max(65, retryAfterSeconds, adaptiveSeconds);
+  writeNumber(GEMINI_TTS_COOLDOWN_KEY, Date.now() + delaySeconds * 1000);
+  return delaySeconds;
+}
+
+function clearGeminiTtsCooldown(): void {
+  writeNumber(GEMINI_TTS_COOLDOWN_KEY, 0);
+  writeNumber(GEMINI_TTS_FAILURES_KEY, 0);
+  quotaNoticeShown = false;
+}
+
+function recentGeminiRequests(): number[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(GEMINI_TTS_REQUESTS_KEY) ?? "[]");
+    if (!Array.isArray(parsed)) return [];
+    const cutoff = Date.now() - GEMINI_TTS_WINDOW_MS;
+    return parsed.map(Number).filter((value) => Number.isFinite(value) && value > cutoff);
+  } catch {
+    return [];
+  }
+}
+
+function reserveGeminiRequestSlot(): void {
+  const now = Date.now();
+  const recent = recentGeminiRequests();
+  if (recent.length >= GEMINI_TTS_MAX_REQUESTS_PER_WINDOW) {
+    const retryAfterSeconds = Math.max(2, Math.ceil((recent[0] + GEMINI_TTS_WINDOW_MS - now) / 1000));
+    throw new GeminiTtsError("Gemini 요청이 잠시 많습니다.", 429, retryAfterSeconds);
+  }
+  recent.push(now);
+  try { localStorage.setItem(GEMINI_TTS_REQUESTS_KEY, JSON.stringify(recent)); }
+  catch { /* ignore */ }
+}
+
 function isQuotaError(message: string): boolean {
-  return /무료 사용 한도|quota|rate limit|resource exhausted|429/i.test(message);
+  return /요청이 잠시 많|quota|rate limit|resource exhausted|429/i.test(message);
 }
 
 export function getEnglishVoices(): SpeechSynthesisVoice[] {
@@ -270,6 +349,7 @@ function browserPerformance(text: string, options: SpeakOptions): { rate: number
 }
 
 function browserSpeak(text: string, options: SpeakOptions, generation = playbackGeneration): void {
+  const browserText = options.fallbackText?.replace(/\s+/g, " ").trim() || text;
   if (!("speechSynthesis" in window)) {
     pendingSpeech = false;
     options.onError?.("이 브라우저는 음성 읽기를 지원하지 않습니다.");
@@ -277,9 +357,9 @@ function browserSpeak(text: string, options: SpeakOptions, generation = playback
   }
   const voicePreset = options.voicePreset ?? "us-female";
   window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
+  const utterance = new SpeechSynthesisUtterance(browserText);
   utterance.lang = presetLocale(voicePreset);
-  const performance = browserPerformance(text, options);
+  const performance = browserPerformance(browserText, options);
   utterance.rate = performance.rate;
   utterance.pitch = performance.pitch;
   utterance.volume = performance.volume;
@@ -321,22 +401,105 @@ function pcmToWavBlob(pcm: Uint8Array, sampleRate = 24000): Blob {
   return new Blob([header, pcm.buffer.slice(pcm.byteOffset, pcm.byteOffset + pcm.byteLength) as ArrayBuffer], { type: "audio/wav" });
 }
 
+function hashCacheText(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function speechCacheKey(text: string, options: SpeakOptions): string {
+  const kind = options.kind ?? "sentence";
+  const voicePreset = options.voicePreset ?? "us-female";
+  const narrationStyle = options.narrationStyle ?? "clear";
+  return `tts-v3|${voicePreset}|${kind}|${narrationStyle}|${hashCacheText(text)}|${text.length}`;
+}
+
+async function trimPersistentAudioCache(): Promise<void> {
+  try {
+    const records = await db.speechAudio.orderBy("lastAccessedAt").toArray();
+    let totalBytes = records.reduce((sum, record) => sum + Number(record.bytes || record.blob?.size || 0), 0);
+    let excessEntries = Math.max(0, records.length - GEMINI_TTS_CACHE_LIMIT_ENTRIES);
+    const deleteKeys: string[] = [];
+    for (const record of records) {
+      if (excessEntries <= 0 && totalBytes <= GEMINI_TTS_CACHE_LIMIT_BYTES) break;
+      deleteKeys.push(record.key);
+      totalBytes -= Number(record.bytes || record.blob?.size || 0);
+      excessEntries -= 1;
+      const url = audioCache.get(record.key);
+      if (url) {
+        URL.revokeObjectURL(url);
+        audioCache.delete(record.key);
+      }
+    }
+    if (deleteKeys.length) await db.speechAudio.bulkDelete(deleteKeys);
+  } catch {
+    // Audio cache cleanup must never block reading.
+  }
+}
+
+async function getPersistentAudioUrl(cacheKey: string): Promise<string | undefined> {
+  const memoryUrl = audioCache.get(cacheKey);
+  if (memoryUrl) return memoryUrl;
+  try {
+    const record = await db.speechAudio.get(cacheKey);
+    if (!record?.blob?.size) return undefined;
+    const url = URL.createObjectURL(record.blob);
+    audioCache.set(cacheKey, url);
+    void db.speechAudio.update(cacheKey, { lastAccessedAt: Date.now() });
+    return url;
+  } catch {
+    return undefined;
+  }
+}
+
+async function savePersistentAudio(cacheKey: string, blob: Blob, options: SpeakOptions): Promise<void> {
+  try {
+    const now = Date.now();
+    await db.speechAudio.put({
+      key: cacheKey,
+      blob,
+      bytes: blob.size,
+      updatedAt: now,
+      lastAccessedAt: now,
+      bookId: options.cacheContext?.bookId,
+      pageId: options.cacheContext?.pageId,
+    });
+    void trimPersistentAudioCache();
+  } catch {
+    // IndexedDB may be full or disabled. In-memory playback still works.
+  }
+}
+
 async function requestGeminiAudio(text: string, options: SpeakOptions): Promise<string> {
   const kind = options.kind ?? "sentence";
   const voicePreset = options.voicePreset ?? "us-female";
   const narrationStyle = options.narrationStyle ?? "clear";
-  const cacheKey = `${voicePreset}|${kind}|${narrationStyle}|${text}`;
-  const cached = audioCache.get(cacheKey);
+  const cacheKey = speechCacheKey(text, options);
+  const cached = await getPersistentAudioUrl(cacheKey);
   if (cached) return cached;
+
+  reserveGeminiRequestSlot();
   const response = await fetch("/api/tts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text, rate: 1, kind, voicePreset, narrationStyle }),
   });
   const raw = await response.text();
-  let payload: { data?: string; mimeType?: string; error?: string } = {};
-  try { payload = raw ? JSON.parse(raw) : {}; } catch { throw new Error(raw || `고음질 음성 요청 실패 (${response.status})`); }
-  if (!response.ok || !payload.data) throw new Error(payload.error || `고음질 음성 요청 실패 (${response.status})`);
+  let payload: { data?: string; mimeType?: string; error?: string; retryAfterSeconds?: number } = {};
+  try { payload = raw ? JSON.parse(raw) : {}; }
+  catch { throw new GeminiTtsError(raw || `고음질 음성 요청 실패 (${response.status})`, response.status); }
+
+  if (!response.ok || !payload.data) {
+    throw new GeminiTtsError(
+      payload.error || `고음질 음성 요청 실패 (${response.status})`,
+      response.status,
+      Number(payload.retryAfterSeconds ?? response.headers.get("retry-after") ?? 0),
+    );
+  }
+
   const mimeType = payload.mimeType ?? "audio/L16;rate=24000";
   const bytes = base64ToBytes(payload.data);
   const blob = mimeType.includes("wav")
@@ -344,6 +507,8 @@ async function requestGeminiAudio(text: string, options: SpeakOptions): Promise<
     : pcmToWavBlob(bytes, Number(mimeType.match(/rate=(\d+)/)?.[1] ?? 24000));
   const url = URL.createObjectURL(blob);
   audioCache.set(cacheKey, url);
+  await savePersistentAudio(cacheKey, blob, options);
+  clearGeminiTtsCooldown();
   return url;
 }
 
@@ -360,15 +525,29 @@ async function geminiSpeak(text: string, options: SpeakOptions, generation: numb
     pendingSpeech = false;
     pausedAudioPosition = 0;
     attachAudioHandlers(audio, request, generation);
-    if (!pauseRequested) await audio.play();
+
+    const playFromRequestedPosition = () => {
+      if (generation !== playbackGeneration || currentAudio !== audio || pauseRequested) return;
+      const ratio = Math.max(0, Math.min(0.98, Number(options.startAtRatio ?? 0)));
+      if (ratio > 0 && Number.isFinite(audio.duration) && audio.duration > 0) {
+        const position = Math.min(audio.duration - 0.05, audio.duration * ratio);
+        try { audio.currentTime = Math.max(0, position); } catch { /* Safari retries after metadata */ }
+      }
+      void audio.play().catch(() => options.onError?.("음성을 재생하지 못했습니다. 재생 버튼을 다시 눌러 주세요."));
+    };
+
+    if (audio.readyState >= 1) playFromRequestedPosition();
+    else audio.onloadedmetadata = playFromRequestedPosition;
   } catch (error) {
     if (generation !== playbackGeneration) return;
     const message = error instanceof Error ? error.message : "고음질 음성 생성에 실패했습니다.";
-    if (isQuotaError(message)) {
-      startGeminiTtsCooldown();
+    if (isQuotaError(message) || (error instanceof GeminiTtsError && error.status === 429)) {
+      const retryAfterSeconds = error instanceof GeminiTtsError ? error.retryAfterSeconds : 65;
+      const cooldownSeconds = startGeminiTtsCooldown(retryAfterSeconds);
       if (!quotaNoticeShown) {
         quotaNoticeShown = true;
-        options.onError?.("Gemini 음성 사용 한도에 도달해 1시간 동안 기기 음성으로 읽습니다.");
+        const wait = cooldownSeconds >= 120 ? `${Math.ceil(cooldownSeconds / 60)}분` : `${cooldownSeconds}초`;
+        options.onError?.(`Gemini 요청이 잠시 많아 기기 음성으로 재생합니다. 약 ${wait} 후 고품질 음성을 다시 사용할 수 있습니다.`);
       }
     } else {
       options.onError?.(`${message} 기기 음성으로 재생합니다.`);
@@ -390,14 +569,21 @@ function startSpeech(cleanText: string, options: SpeakOptions): void {
     }
     if (!quotaNoticeShown) {
       quotaNoticeShown = true;
-      options.onError?.("Gemini 음성 사용 한도에 도달해 1시간 동안 기기 음성으로 읽습니다.");
+      const remainingSeconds = Math.max(1, Math.ceil((geminiTtsCooldownUntil() - Date.now()) / 1000));
+      const wait = remainingSeconds >= 120 ? `${Math.ceil(remainingSeconds / 60)}분` : `${remainingSeconds}초`;
+      options.onError?.(`Gemini 요청이 잠시 많아 기기 음성으로 재생합니다. 약 ${wait} 후 고품질 음성을 다시 사용할 수 있습니다.`);
     }
   }
   browserSpeak(cleanText, options, generation);
 }
 
 export function speakText(text: string, options: SpeakOptions = {}): void {
-  const cleanText = text.replace(/\s+/g, " ").trim();
+  const cleanText = text
+    .split(/\r?\n/)
+    .map((line) => line.replace(/[\t ]+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n")
+    .trim();
   if (!cleanText) return;
   startSpeech(cleanText, options);
 }
