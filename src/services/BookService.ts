@@ -20,3 +20,9 @@ export async function updateBook(book: Book): Promise<string> {
 export async function deleteBook(id: string): Promise<void> {
   await db.books.delete(id);
 }
+
+export async function saveImportedBooks(books: Book[]): Promise<void> {
+  await db.transaction("rw", db.books, async () => {
+    await db.books.bulkPut(books);
+  });
+}

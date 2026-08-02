@@ -25,12 +25,19 @@ function splitSentences(text: string): string[] {
   return text.replace(/\s+/g, " ").match(/[^.!?]+[.!?]+|[^.!?]+$/g)?.map((item) => item.trim()).filter(Boolean) ?? [];
 }
 
+function sentenceGapMs(): number {
+  return 500;
+}
+
 export default function Reader({ bookId, onBack }: Props) {
   const [book, setBook] = useState<Book | null>(null);
   const [pageIndex, setPageIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [editorOpen, setEditorOpen] = useState(false);
-  const [rate, setRate] = useState(0.86);
+  const [rate, setRate] = useState(() => {
+    const saved = Number(localStorage.getItem("talktalk.speechRate") ?? 0.9);
+    return Number.isFinite(saved) ? Math.max(0.5, Math.min(2, saved)) : 0.9;
+  });
   const [speechEngine] = useState<SpeechEngine>("gemini");
   const [voicePreset, setVoicePreset] = useState<VoicePreset>(() => (localStorage.getItem("talktalk.voicePreset") as VoicePreset) || "us-female");
   const [narrationStyle, setNarrationStyle] = useState<NarrationStyle>(() => (localStorage.getItem("talktalk.narrationStyle") as NarrationStyle) || "storybook");
@@ -60,6 +67,9 @@ export default function Reader({ bookId, onBack }: Props) {
   const readingPausedRef = useRef(false);
   const storyIndexRef = useRef(0);
   const storySentencesRef = useRef<string[]>([]);
+  const storyTimer = useRef<number | null>(null);
+  const storyWaiting = useRef(false);
+  const storyNextIndex = useRef(0);
   const fullscreenRoot = useRef<HTMLElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -82,6 +92,12 @@ export default function Reader({ bookId, onBack }: Props) {
     localStorage.setItem("talktalk.narrationStyle", value);
     const style = NARRATION_STYLES.find((item) => item.id === value);
     setSpeechNotice(`${style?.label ?? "선택한 낭독"} 모드: ${style?.description ?? ""}`.trim());
+  }
+
+  function changeRate(value: number) {
+    const safeRate = Math.max(0.5, Math.min(2, value));
+    setRate(safeRate);
+    localStorage.setItem("talktalk.speechRate", String(safeRate));
   }
 
   function handleSpeechError(message: string) {
@@ -108,6 +124,7 @@ export default function Reader({ bookId, onBack }: Props) {
       active = false;
       stopSpeech();
       if (followTimer.current) window.clearTimeout(followTimer.current);
+      if (storyTimer.current) window.clearTimeout(storyTimer.current);
       if (recordingTimerRef.current) window.clearTimeout(recordingTimerRef.current);
       if (recordingTickRef.current) window.clearInterval(recordingTickRef.current);
       mediaRecorderRef.current?.stop();
@@ -423,6 +440,12 @@ export default function Reader({ bookId, onBack }: Props) {
       window.clearTimeout(followTimer.current);
       followTimer.current = null;
     }
+    if (storyTimer.current) {
+      window.clearTimeout(storyTimer.current);
+      storyTimer.current = null;
+    }
+    storyWaiting.current = false;
+    storyNextIndex.current = 0;
   }
 
   function playStorySentence(index: number) {
@@ -452,7 +475,13 @@ export default function Reader({ bookId, onBack }: Props) {
           finishReading();
           return;
         }
-        playStorySentence(next);
+        storyNextIndex.current = next;
+        storyWaiting.current = true;
+        storyTimer.current = window.setTimeout(() => {
+          storyTimer.current = null;
+          storyWaiting.current = false;
+          if (!readingPausedRef.current) playStorySentence(next);
+        }, sentenceGapMs());
       },
     });
   }
@@ -468,6 +497,12 @@ export default function Reader({ bookId, onBack }: Props) {
     setReadingMode("story");
     setReadingPaused(false);
     readingPausedRef.current = false;
+    storyWaiting.current = false;
+    storyNextIndex.current = safeIndex;
+    if (storyTimer.current) {
+      window.clearTimeout(storyTimer.current);
+      storyTimer.current = null;
+    }
     playStorySentence(safeIndex);
   }
 
@@ -581,6 +616,12 @@ export default function Reader({ bookId, onBack }: Props) {
       readingPausedRef.current = false;
 
       if (readingMode === "story") {
+        if (storyWaiting.current) {
+          const next = storyNextIndex.current;
+          storyWaiting.current = false;
+          playStorySentence(next);
+          return;
+        }
         const resumed = resumeSpeech();
         if (!resumed) playStorySentence(storyIndexRef.current);
         return;
@@ -606,6 +647,12 @@ export default function Reader({ bookId, onBack }: Props) {
       stopPracticeRecording(true);
       followWaiting.current = true;
       setPracticeState("listening");
+      return;
+    }
+    if (readingMode === "story" && storyTimer.current) {
+      window.clearTimeout(storyTimer.current);
+      storyTimer.current = null;
+      storyWaiting.current = true;
       return;
     }
     if (followTimer.current) {
@@ -794,7 +841,7 @@ export default function Reader({ bookId, onBack }: Props) {
             {analysis && <button className="secondary-button" type="button" onClick={() => setShowBoxes((value) => !value)}>{showBoxes ? "터치 영역 숨기기" : "터치 영역 보기"}</button>}
             <label className="voice-control">음성 <select value={voicePreset} onChange={(event) => changeVoicePreset(event.target.value as VoicePreset)}>{VOICE_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}</select></label>
             <label className="narration-control">낭독 <select value={narrationStyle} onChange={(event) => changeNarrationStyle(event.target.value as NarrationStyle)}>{NARRATION_STYLES.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}</select></label>
-            <label className="speed-control">속도 <input type="range" min="0.6" max="1.2" step="0.05" value={rate} onChange={(event) => setRate(Number(event.target.value))} /><span>{rate.toFixed(2)}x</span></label>
+            <label className="speed-control">속도 <input type="range" min="0.5" max="2" step="0.05" value={rate} onChange={(event) => changeRate(Number(event.target.value))} /><span>{rate.toFixed(2)}x</span></label>
           </section>
 
           {analysisError && <p className="analysis-error" role="alert">{analysisError}</p>}
@@ -806,7 +853,6 @@ export default function Reader({ bookId, onBack }: Props) {
             </div>
           )}
           {!currentText && !analysisError && <p className="reader-help">“현재 페이지 인식” 또는 “미분석 페이지 모두”를 누르면 문장과 단어 위치를 자동으로 찾습니다. 두 쪽이 함께 찍힌 사진은 좌우로 나눠 빠르게 분석합니다.</p>}
-          {analysis && <p className="reader-help">파란 단어 영역을 누르면 단어 발음, 문장 영역을 누르면 문장 전체 발음이 재생됩니다.</p>}
 
           <div className="reader-progress-track" aria-label={`책 진행률 ${book.progress}%`}><div className="reader-progress-value" style={{ width: `${book.progress}%` }} /></div>
           <nav className="reader-controls" aria-label="페이지 이동">

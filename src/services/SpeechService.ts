@@ -10,9 +10,9 @@ export const VOICE_PRESETS: Array<{ id: VoicePreset; label: string; locale: stri
 ];
 
 export const NARRATION_STYLES: Array<{ id: NarrationStyle; label: string; description: string }> = [
-  { id: "clear", label: "또렷하게", description: "학습용으로 감정을 줄이고 정확하게 읽습니다." },
-  { id: "storybook", label: "동화책처럼", description: "내레이션과 대화를 자연스럽게 구분합니다." },
-  { id: "theater", label: "연극처럼", description: "대사와 장면 감정을 더 크게 표현합니다." },
+  { id: "clear", label: "또렷하게", description: "등장인물 연기 없이 일정한 톤으로 정확하게 읽습니다." },
+  { id: "storybook", label: "동화책처럼", description: "따뜻한 내레이션과 대화체 억양을 확실히 구분합니다." },
+  { id: "theater", label: "연극처럼", description: "속삭임·놀람·긴장·외침을 크게 살려 연기합니다." },
 ];
 
 export interface SpeakOptions {
@@ -157,6 +157,7 @@ function recreateAudioAt(position: number): boolean {
   const request = lastSpeechRequest;
   const generation = ++playbackGeneration;
   const audio = new Audio(request.audioUrl);
+  configureAudioPlayback(audio, request.options);
   currentAudio = audio;
   pendingSpeech = false;
   pauseRequested = false;
@@ -195,6 +196,62 @@ export function resumeSpeech(): boolean {
   return false;
 }
 
+function clampRate(value: number | undefined): number {
+  return Math.max(0.5, Math.min(2, Number(value ?? 0.9)));
+}
+
+function configureAudioPlayback(audio: HTMLAudioElement, options: SpeakOptions): void {
+  audio.playbackRate = clampRate(options.rate);
+  audio.defaultPlaybackRate = audio.playbackRate;
+  try { audio.preservesPitch = true; } catch { /* older browsers may not expose this option */ }
+}
+
+function browserPerformance(text: string, options: SpeakOptions): { rate: number; pitch: number; volume: number } {
+  const style = options.narrationStyle ?? "clear";
+  const preset = options.voicePreset ?? "us-female";
+  const lower = text.toLowerCase();
+  const quoted = /[“”"]/.test(text);
+  const question = /\?/.test(text);
+  const exclamation = /!/.test(text);
+  const basePitch = preset === "uk-male" ? 0.92 : 1.04;
+  let rate = clampRate(options.rate);
+  let pitch = basePitch;
+  let volume = 1;
+
+  if (style === "clear") {
+    return { rate, pitch, volume };
+  }
+
+  if (style === "storybook") {
+    if (quoted) pitch += 0.1;
+    if (question) pitch += 0.08;
+    if (exclamation) { pitch += 0.06; rate *= 1.03; }
+    if (/whisper|murmur|softly|quietly/.test(lower)) { volume = 0.72; pitch -= 0.08; rate *= 0.9; }
+    if (/shout|yell|scream|roared/.test(lower)) { pitch += 0.14; rate *= 1.05; }
+    if (/sad|sob|tear|lonely/.test(lower)) { pitch -= 0.12; rate *= 0.9; }
+    if (/laugh|giggl|happy|delighted/.test(lower)) { pitch += 0.14; rate *= 1.04; }
+  }
+
+  if (style === "theater") {
+    if (quoted) { pitch += 0.2; rate *= 0.94; }
+    if (question) { pitch += 0.17; rate *= 0.92; }
+    if (exclamation) { pitch += 0.19; rate *= 1.08; }
+    if (/whisper|murmur|softly|quietly/.test(lower)) { volume = 0.5; pitch -= 0.17; rate *= 0.78; }
+    if (/shout|yell|scream|roared|cried out/.test(lower)) { volume = 1; pitch += 0.24; rate *= 1.13; }
+    if (/afraid|scared|trembl|terrified/.test(lower)) { pitch += 0.08; rate *= 0.78; }
+    if (/angry|furious|growl|snapped/.test(lower)) { pitch -= 0.2; rate *= 0.92; }
+    if (/sad|sob|tear|lonely/.test(lower)) { pitch -= 0.22; rate *= 0.76; }
+    if (/laugh|giggl|happy|delighted/.test(lower)) { pitch += 0.24; rate *= 1.12; }
+    if (/suddenly|bang|crash|slam|boom/.test(lower)) { pitch += 0.16; rate *= 1.12; }
+  }
+
+  return {
+    rate: Math.max(0.5, Math.min(2, rate)),
+    pitch: Math.max(0.5, Math.min(1.8, pitch)),
+    volume: Math.max(0.1, Math.min(1, volume)),
+  };
+}
+
 function browserSpeak(text: string, options: SpeakOptions, generation = playbackGeneration): void {
   if (!("speechSynthesis" in window)) {
     pendingSpeech = false;
@@ -202,15 +259,13 @@ function browserSpeak(text: string, options: SpeakOptions, generation = playback
     return;
   }
   const voicePreset = options.voicePreset ?? "us-female";
-  const narrationStyle = options.narrationStyle ?? "clear";
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = presetLocale(voicePreset);
-  const baseRate = options.rate ?? 0.86;
-  utterance.rate = narrationStyle === "theater" ? Math.max(0.6, baseRate * 0.96) : baseRate;
-  const basePitch = voicePreset === "uk-male" ? 0.92 : 1.04;
-  utterance.pitch = narrationStyle === "theater" ? basePitch + 0.03 : basePitch;
-  utterance.volume = 1;
+  const performance = browserPerformance(text, options);
+  utterance.rate = performance.rate;
+  utterance.pitch = performance.pitch;
+  utterance.volume = performance.volume;
   utterance.voice = getPreferredVoice(voicePreset) ?? null;
   utterance.onstart = () => {
     if (generation !== playbackGeneration) return;
@@ -250,17 +305,16 @@ function pcmToWavBlob(pcm: Uint8Array, sampleRate = 24000): Blob {
 }
 
 async function requestGeminiAudio(text: string, options: SpeakOptions): Promise<string> {
-  const rate = options.rate ?? 0.86;
   const kind = options.kind ?? "sentence";
   const voicePreset = options.voicePreset ?? "us-female";
   const narrationStyle = options.narrationStyle ?? "clear";
-  const cacheKey = `${voicePreset}|${kind}|${narrationStyle}|${rate.toFixed(2)}|${text}`;
+  const cacheKey = `${voicePreset}|${kind}|${narrationStyle}|${text}`;
   const cached = audioCache.get(cacheKey);
   if (cached) return cached;
   const response = await fetch("/api/tts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, rate, kind, voicePreset, narrationStyle }),
+    body: JSON.stringify({ text, rate: 1, kind, voicePreset, narrationStyle }),
   });
   const raw = await response.text();
   let payload: { data?: string; mimeType?: string; error?: string } = {};
@@ -284,6 +338,7 @@ async function geminiSpeak(text: string, options: SpeakOptions, generation: numb
     request.audioUrl = url;
     lastSpeechRequest = request;
     const audio = new Audio(url);
+    configureAudioPlayback(audio, options);
     currentAudio = audio;
     pendingSpeech = false;
     pausedAudioPosition = 0;

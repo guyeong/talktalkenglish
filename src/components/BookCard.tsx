@@ -4,10 +4,12 @@ import type { Book } from "../types/Book";
 interface Props {
   book: Book;
   onOpen: (id: string) => void;
+  onExport: (id: string) => void;
   onDelete: (id: string) => void;
+  backupBusy?: boolean;
 }
 
-export default function BookCard({ book, onOpen, onDelete }: Props) {
+export default function BookCard({ book, onOpen, onExport, onDelete, backupBusy = false }: Props) {
   const coverUrl = useObjectUrl(book.pages[0]?.image);
   const readyPages = book.pages.filter((page) => page.status === "ready").length;
 
@@ -33,20 +35,34 @@ export default function BookCard({ book, onOpen, onDelete }: Props) {
       <div className="book-card-body">
         <div className="book-title-row">
           <div>
-            <h2>{book.title}</h2>
+            <h2 title={book.title}>{book.title}</h2>
             <p>{book.pages.length}페이지</p>
           </div>
-          <button
-            className="icon-button danger"
-            type="button"
-            aria-label={`${book.title} 삭제`}
-            onClick={(event) => {
-              event.stopPropagation();
-              onDelete(book.id);
-            }}
-          >
-            삭제
-          </button>
+          <div className="book-card-actions">
+            <button
+              className="icon-button export"
+              type="button"
+              disabled={backupBusy}
+              aria-label={`${book.title} 내보내기`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onExport(book.id);
+              }}
+            >
+              백업
+            </button>
+            <button
+              className="icon-button danger"
+              type="button"
+              aria-label={`${book.title} 삭제`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete(book.id);
+              }}
+            >
+              삭제
+            </button>
+          </div>
         </div>
 
         <div className="progress-track" aria-label={`읽기 진행률 ${book.progress}%`}>

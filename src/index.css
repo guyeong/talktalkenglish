@@ -984,3 +984,91 @@ body { min-height: 100dvh; }
     font-size: 12px;
   }
 }
+
+/* v3.4: backup transfer, wider speed range, visible sentence pauses and no blocking help banner */
+.library-heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.library-backup-button {
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid #cbd8e8;
+  border-radius: 11px;
+  color: #315579;
+  background: #f7faff;
+  font-size: 12px;
+  font-weight: 850;
+  cursor: pointer;
+}
+.library-backup-button:hover { background: #eaf3ff; }
+.library-backup-button:disabled { cursor: wait; opacity: .55; }
+.backup-status {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 11px 13px;
+  border: 1px solid #cce0f8;
+  border-radius: 13px;
+  color: #28558d;
+  background: #eef6ff;
+  font-size: 13px;
+  font-weight: 750;
+}
+.backup-status p { margin: 0; }
+.backup-status button {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  color: #315b8f;
+  background: white;
+  font-size: 20px;
+  cursor: pointer;
+}
+.empty-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 9px; }
+.book-title-row { padding-right: 122px; }
+.book-card-actions {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 5;
+  display: flex;
+  gap: 6px;
+}
+.book-title-row .book-card-actions .icon-button {
+  position: static;
+  min-width: 50px;
+  height: 36px;
+  padding: 0 8px;
+  box-shadow: 0 5px 14px rgba(35,72,120,.1);
+}
+.book-title-row .book-card-actions .icon-button.export { color: #245a9c; background: #eaf3ff; }
+.book-title-row .book-card-actions .icon-button.export:hover { background: #dbeaff; }
+.book-title-row .book-card-actions .icon-button.danger { color: #9f2f2a; background: #fff1ef; }
+
+/* The old translucent touch instruction was fixed over the controls. It is now removed. */
+.reader-page:not(.reader-fullscreen) > .reader-help { display: none !important; }
+.speed-control span { min-width: 52px; }
+
+@media (max-width: 760px) {
+  .section-heading { align-items: flex-start; gap: 12px; }
+  .library-heading-actions { max-width: 230px; }
+  .library-backup-button { min-height: 35px; padding: 0 9px; font-size: 11px; }
+  .book-title-row { padding-right: 112px; }
+  .book-card-actions { top: 9px; right: 9px; gap: 4px; }
+  .book-title-row .book-card-actions .icon-button { min-width: 48px; height: 34px; font-size: 11px; }
+}
+
+@media (max-width: 430px) {
+  .section-heading { display: grid; grid-template-columns: 1fr; }
+  .library-heading-actions { max-width: none; justify-content: flex-start; }
+  .book-title-row { padding-right: 104px; }
+  .book-title-row .book-card-actions .icon-button { min-width: 45px; padding: 0 6px; font-size: 10.5px; }
+}

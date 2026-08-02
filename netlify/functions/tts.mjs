@@ -64,23 +64,29 @@ function emotionCue(text, narrationStyle) {
 function styleDirections(narrationStyle) {
   if (narrationStyle === "theater") {
     return [
-      "Perform like an expressive children's theatre narrator.",
-      "Make a strong audible distinction between narration and quoted dialogue.",
-      "Give each quoted line a clear character intention while keeping one consistent voice identity.",
-      "Use noticeable changes in energy, pitch, pauses, suspense, surprise, and humor, but never become hard to understand.",
+      "Perform as a vivid children's stage actor, not as a neutral reader.",
+      "Make narration and quoted dialogue unmistakably different: narration is grounded and cinematic; every quoted line is acted in character.",
+      "Use large but intelligible changes in pitch, rhythm, volume, suspense, surprise, fear, delight, anger, and humor.",
+      "A whisper must sound genuinely quiet and close; a shout must sound urgent and powerful; a frightened line should tremble; a joyful line should sparkle.",
+      "Pause clearly at commas and clauses, and take a dramatic breath at dialogue boundaries or scene changes.",
+      "Do not flatten the performance. The difference from an English-learning voice must be obvious on first listen.",
     ].join(" ");
   }
   if (narrationStyle === "storybook") {
     return [
-      "Read like a skilled children's audiobook narrator.",
-      "Keep narration warm and steady, then shift clearly into a more conversational character tone for quoted dialogue.",
-      "Infer gentle emotion from punctuation, dialogue verbs, and scene words.",
-      "Use natural pauses around quotation marks and scene changes without overacting.",
+      "Read like a professional children's audiobook narrator.",
+      "Keep unquoted narration warm, calm, and gently cinematic.",
+      "Shift quoted dialogue into a clearly more conversational character voice with noticeably different pitch, rhythm, and intention.",
+      "Use punctuation and dialogue verbs to express curiosity, surprise, worry, happiness, and suspense without overacting.",
+      "Pause naturally at commas and clauses and take a clear breath between narration and dialogue.",
+      "The difference between narration and dialogue must be easy for a child to hear.",
     ].join(" ");
   }
   return [
-    "Read as a clear English-learning model.",
-    "Use restrained emotion, steady pacing, precise consonants, and easy-to-copy sentence stress.",
+    "Read as a precise English-learning model, not as an actor.",
+    "Keep narration and quoted dialogue in nearly the same steady voice.",
+    "Use restrained emotion, even volume, stable pitch, precise consonants, and easy-to-copy sentence stress.",
+    "Pause briefly at commas and clearly at the end of clauses, but avoid dramatic character voices.",
   ].join(" ");
 }
 
@@ -97,6 +103,7 @@ function buildInstruction({ clean, rate, kind, preset, narrationStyle }) {
     styleDirections(narrationStyle),
     "For quoted dialogue, sound like a character speaking; for unquoted text, sound like the narrator.",
     "Use the punctuation and dialogue verbs as performance cues.",
+    "Never run clauses together. Leave audible space at commas, semicolons, quotation boundaries, and changes of speaker.",
     "Read the transcript exactly. Do not add, remove, explain, paraphrase, or speak any directions, labels, or audio tags.",
     "PERFORMANCE CUE:",
     cue,
