@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 
-const MODEL = "gemini-3.1-flash-lite";
+const MODEL = "gemini-3.5-flash-lite";
 const UPSTREAM_TIMEOUT_MS = 43_000;
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), {

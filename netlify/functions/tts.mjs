@@ -39,6 +39,72 @@ function pace(rate) {
   return "at a slightly brisk but clear pace";
 }
 
+function emotionCue(text, narrationStyle) {
+  if (narrationStyle === "clear") return "[clear and neutral]";
+
+  const lower = text.toLowerCase();
+  const quoted = /[“”\"]/.test(text);
+  const question = /\?/.test(text);
+  const exclamation = /!/.test(text);
+
+  if (/whisper|murmur|softly|quietly/.test(lower)) return "[whispers, gently]";
+  if (/shout|yell|scream|cried out|roared/.test(lower)) return narrationStyle === "theater" ? "[shouting, urgent]" : "[excited, urgent]";
+  if (/trembl|afraid|scared|fright|terrified|nervous/.test(lower)) return "[trembling, cautiously]";
+  if (/laugh|giggl|grin|smile|cheer|happy|delighted/.test(lower)) return narrationStyle === "theater" ? "[brightly, playfully, delighted]" : "[warmly, cheerfully]";
+  if (/sob|sad|tear|lonely|sorry|disappointed/.test(lower)) return "[sadly, softly]";
+  if (/angry|furious|growl|snapped/.test(lower)) return narrationStyle === "theater" ? "[angrily, forcefully]" : "[firmly]";
+  if (/suddenly|bang|crash|slam|boom/.test(lower)) return "[dramatically, with a sudden change of energy]";
+  if (/dark|shadow|crept|tiptoe|myster|haunt|ghost/.test(lower)) return narrationStyle === "theater" ? "[spookily, with suspense]" : "[mysteriously, softly]";
+  if (question) return quoted ? "[curious, conversationally]" : "[curious]";
+  if (exclamation) return narrationStyle === "theater" ? "[excitedly, with strong emphasis]" : "[brightly, with emphasis]";
+  if (quoted) return narrationStyle === "theater" ? "[expressively, in character]" : "[naturally, conversationally]";
+  return narrationStyle === "theater" ? "[dramatic storyteller]" : "[warm storyteller]";
+}
+
+function styleDirections(narrationStyle) {
+  if (narrationStyle === "theater") {
+    return [
+      "Perform like an expressive children's theatre narrator.",
+      "Make a strong audible distinction between narration and quoted dialogue.",
+      "Give each quoted line a clear character intention while keeping one consistent voice identity.",
+      "Use noticeable changes in energy, pitch, pauses, suspense, surprise, and humor, but never become hard to understand.",
+    ].join(" ");
+  }
+  if (narrationStyle === "storybook") {
+    return [
+      "Read like a skilled children's audiobook narrator.",
+      "Keep narration warm and steady, then shift clearly into a more conversational character tone for quoted dialogue.",
+      "Infer gentle emotion from punctuation, dialogue verbs, and scene words.",
+      "Use natural pauses around quotation marks and scene changes without overacting.",
+    ].join(" ");
+  }
+  return [
+    "Read as a clear English-learning model.",
+    "Use restrained emotion, steady pacing, precise consonants, and easy-to-copy sentence stress.",
+  ].join(" ");
+}
+
+function buildInstruction({ clean, rate, kind, preset, narrationStyle }) {
+  if (kind === "word") {
+    return `Synthesize speech only. Pronounce exactly the English word in the transcript once. Use ${preset.accent} and ${preset.profile}. Do not add any words. Do not speak directions or labels.\n\nTRANSCRIPT:\n${clean}`;
+  }
+
+  const cue = emotionCue(clean, narrationStyle);
+  return [
+    "Synthesize speech only.",
+    `Use ${preset.accent}. The speaker is ${preset.profile}.`,
+    `Speak ${pace(Number(rate))}.`,
+    styleDirections(narrationStyle),
+    "For quoted dialogue, sound like a character speaking; for unquoted text, sound like the narrator.",
+    "Use the punctuation and dialogue verbs as performance cues.",
+    "Read the transcript exactly. Do not add, remove, explain, paraphrase, or speak any directions, labels, or audio tags.",
+    "PERFORMANCE CUE:",
+    cue,
+    "TRANSCRIPT:",
+    clean,
+  ].join("\n");
+}
+
 function friendlyError(error) {
   const message = error instanceof Error ? error.message : String(error ?? "");
   if (/authentication|credential|oauth|unauthenticated|api key/i.test(message)) {
@@ -82,15 +148,20 @@ export default async (request) => {
   if (!apiKey) return json({ error: "Netlify 환경변수 GEMINI_API_KEY가 설정되지 않았습니다." }, 500);
 
   try {
-    const { text, rate = 0.86, kind = "sentence", voicePreset = "us-female" } = await request.json();
+    const {
+      text,
+      rate = 0.86,
+      kind = "sentence",
+      voicePreset = "us-female",
+      narrationStyle = "storybook",
+    } = await request.json();
     const clean = String(text ?? "").replace(/\s+/g, " ").trim();
     if (!clean) return json({ error: "읽을 문장이 없습니다." }, 400);
     if (clean.length > 3000) return json({ error: "한 번에 읽을 텍스트가 너무 깁니다." }, 400);
 
     const preset = PRESETS[voicePreset] ?? PRESETS["us-female"];
-    const instruction = kind === "word"
-      ? `Synthesize speech only. Pronounce exactly the English word in the transcript once. Use ${preset.accent} and ${preset.profile}. Do not add any words.\n\nTRANSCRIPT:\n${clean}`
-      : `Synthesize speech only. Read exactly the transcript using ${preset.accent}. The speaker is ${preset.profile}. Speak ${pace(Number(rate))}. Use natural sentence stress, connected speech, dialogue intonation, and careful consonants. Do not add, remove, explain, or paraphrase anything.\n\nTRANSCRIPT:\n${clean}`;
+    const safeStyle = ["clear", "storybook", "theater"].includes(narrationStyle) ? narrationStyle : "storybook";
+    const instruction = buildInstruction({ clean, rate, kind, preset, narrationStyle: safeStyle });
 
     const ai = new GoogleGenAI({ apiKey });
     const response = await withTimeout(ai.models.generateContent({
@@ -116,6 +187,7 @@ export default async (request) => {
       model: MODEL,
       voice: preset.voice,
       voicePreset,
+      narrationStyle: safeStyle,
     });
   } catch (error) {
     return json({ error: friendlyError(error) }, 500);

@@ -91,3 +91,10 @@ git push origin main
 - iPhone/iPad Safari: 주소창 왼쪽의 페이지 메뉴 → 웹사이트 설정 → 마이크 → 허용
 - Chrome/Edge: 주소창 자물쇠 아이콘 → 사이트 설정 → 마이크 → 허용
 그 뒤 페이지를 완전히 새로고침하세요.
+
+## v3.1 배포 후 확인
+1. Netlify에서 `Deploy project without cache`를 실행합니다.
+2. PC에서 `Ctrl + Shift + R`로 새로고침합니다.
+3. 읽기 도구가 책 사진 위에 모두 보이는지 확인합니다.
+4. iPhone에서 HEIC 또는 HEIF 사진을 선택하면 `사진 준비 중`이 표시된 뒤 미리보기가 나타나는지 확인합니다.
+5. 홈 화면 앱이 이전 화면을 보이면 기존 아이콘을 삭제하고 Safari에서 다시 홈 화면에 추가합니다.

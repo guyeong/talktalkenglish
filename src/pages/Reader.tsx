@@ -3,7 +3,7 @@ import PageTextEditor from "../components/PageTextEditor";
 import ReadingTextLayer from "../components/ReadingTextLayer";
 import { useObjectUrl } from "../hooks/useObjectUrl";
 import { getBook, updateBook } from "../services/BookService";
-import { pauseSpeech, resumeSpeech, speakText, stopSpeech, VOICE_PRESETS, type SpeechEngine, type VoicePreset } from "../services/SpeechService";
+import { NARRATION_STYLES, pauseSpeech, resumeSpeech, speakText, stopSpeech, VOICE_PRESETS, type NarrationStyle, type SpeechEngine, type VoicePreset } from "../services/SpeechService";
 import { extractPageText, type AnalysisProgress } from "../services/VisionService";
 import { bestRecordingMimeType, evaluatePronunciation, type PronunciationEvaluation } from "../services/PronunciationService";
 import type { Book } from "../types/Book";
@@ -33,6 +33,7 @@ export default function Reader({ bookId, onBack }: Props) {
   const [rate, setRate] = useState(0.86);
   const [speechEngine] = useState<SpeechEngine>("gemini");
   const [voicePreset, setVoicePreset] = useState<VoicePreset>(() => (localStorage.getItem("talktalk.voicePreset") as VoicePreset) || "us-female");
+  const [narrationStyle, setNarrationStyle] = useState<NarrationStyle>(() => (localStorage.getItem("talktalk.narrationStyle") as NarrationStyle) || "storybook");
   const [speechNotice, setSpeechNotice] = useState("");
   const [followReading, setFollowReading] = useState(false);
   const [readingMode, setReadingMode] = useState<"idle" | "story" | "follow" | "evaluate">("idle");
@@ -74,6 +75,13 @@ export default function Reader({ bookId, onBack }: Props) {
     localStorage.setItem("talktalk.voicePreset", value);
     const label = VOICE_PRESETS.find((item) => item.id === value)?.label ?? "선택한 음성";
     setSpeechNotice(`${label} 고음질 음성을 사용합니다. 처음 재생은 몇 초 걸릴 수 있습니다.`);
+  }
+
+  function changeNarrationStyle(value: NarrationStyle) {
+    setNarrationStyle(value);
+    localStorage.setItem("talktalk.narrationStyle", value);
+    const style = NARRATION_STYLES.find((item) => item.id === value);
+    setSpeechNotice(`${style?.label ?? "선택한 낭독"} 모드: ${style?.description ?? ""}`.trim());
   }
 
   function handleSpeechError(message: string) {
@@ -425,7 +433,8 @@ export default function Reader({ bookId, onBack }: Props) {
       rate,
       engine: speechEngine,
       voicePreset,
-      kind: "sentence",
+      kind: "story",
+      narrationStyle,
       onError: handleSpeechError,
       onTimeUpdate: (current, duration) => {
         setStoryAudioProgress(duration > 0 ? Math.min(1, current / duration) : 0);
@@ -482,6 +491,7 @@ export default function Reader({ bookId, onBack }: Props) {
       engine: speechEngine,
       voicePreset,
       kind: "sentence",
+      narrationStyle: "clear",
       onError: handleSpeechError,
       onEnd: () => {
         if (readingPausedRef.current) {
@@ -528,7 +538,7 @@ export default function Reader({ bookId, onBack }: Props) {
     setPracticeSentence(sentence);
     followWaiting.current = false;
     speakText(sentence, {
-      rate, engine: speechEngine, voicePreset, kind: "sentence", onError: handleSpeechError,
+      rate, engine: speechEngine, voicePreset, kind: "sentence", narrationStyle: "clear", onError: handleSpeechError,
       onEnd: () => {
         if (readingPausedRef.current) { followWaiting.current = true; return; }
         followWaiting.current = true;
@@ -674,7 +684,7 @@ export default function Reader({ bookId, onBack }: Props) {
           <div className="reader-workspace">
             <section className="reader-stage" aria-label={`${pageIndex + 1}페이지`}>
               <ReaderImage image={currentPage?.image} title={book.title} pageNumber={pageIndex + 1}>
-                {analysis && <ReadingTextLayer analysis={analysis} rate={rate} showBoxes={showBoxes} speechEngine={speechEngine} voicePreset={voicePreset} onSpeechError={handleSpeechError} />}
+                {analysis && <ReadingTextLayer analysis={analysis} rate={rate} showBoxes={showBoxes} speechEngine={speechEngine} voicePreset={voicePreset} narrationStyle={narrationStyle} onSpeechError={handleSpeechError} />}
               </ReaderImage>
               <div className="reader-page-badge">{pageIndex + 1}</div>
               {(analyzing || queueRunning) && <div className="analysis-mask"><span className="analysis-spinner" />{analysisProgress?.label || "AI가 글자를 읽고 있습니다…"}{analysisProgress && <small>{analysisProgress.completed} / {analysisProgress.total}</small>}</div>}
@@ -777,6 +787,7 @@ export default function Reader({ bookId, onBack }: Props) {
             <button className="secondary-button" type="button" onClick={() => setEditorOpen(true)}>{currentText ? "텍스트 수정" : "직접 입력"}</button>
             {analysis && <button className="secondary-button" type="button" onClick={() => setShowBoxes((value) => !value)}>{showBoxes ? "터치 영역 숨기기" : "터치 영역 보기"}</button>}
             <label className="voice-control">음성 <select value={voicePreset} onChange={(event) => changeVoicePreset(event.target.value as VoicePreset)}>{VOICE_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}</select></label>
+            <label className="narration-control">낭독 <select value={narrationStyle} onChange={(event) => changeNarrationStyle(event.target.value as NarrationStyle)}>{NARRATION_STYLES.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}</select></label>
             <label className="speed-control">속도 <input type="range" min="0.6" max="1.2" step="0.05" value={rate} onChange={(event) => setRate(Number(event.target.value))} /><span>{rate.toFixed(2)}x</span></label>
           </section>
 

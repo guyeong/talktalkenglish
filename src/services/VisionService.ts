@@ -1,4 +1,5 @@
 import type { BoundingBox, PageAnalysis } from "../types/Page";
+import { convertHeicBlob, isHeicLike } from "../utils/imageFormat";
 
 interface RawSentence { text: string; bbox: BoundingBox; }
 interface RawWord { text: string; bbox: BoundingBox; sentenceIndex: number; }
@@ -32,14 +33,29 @@ const RETRY_SEGMENT_SIDE = 960;
 const JPEG_QUALITY = 0.78;
 const REQUEST_TIMEOUT_MS = 48_000;
 
-function loadImage(blob: Blob): Promise<HTMLImageElement> {
+function loadNativeImage(blob: Blob): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(blob);
     const image = new Image();
     image.onload = () => { URL.revokeObjectURL(url); resolve(image); };
-    image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("사진을 열지 못했습니다. JPG 또는 PNG 사진을 사용해 주세요.")); };
+    image.onerror = () => { URL.revokeObjectURL(url); reject(new Error("native-image-decode-failed")); };
     image.src = url;
   });
+}
+
+async function loadImage(blob: Blob): Promise<HTMLImageElement> {
+  try {
+    return await loadNativeImage(blob);
+  } catch {
+    try {
+      const fileName = blob instanceof File ? blob.name : "";
+      const converted = isHeicLike(blob, fileName) ? await convertHeicBlob(blob, fileName) : blob;
+      if (converted !== blob) return await loadNativeImage(converted);
+    } catch (conversionError) {
+      console.error(conversionError);
+    }
+    throw new Error("사진을 열지 못했습니다. JPEG, PNG, HEIC, HEIF, WebP 또는 AVIF 사진을 사용해 주세요.");
+  }
 }
 
 function canvasToPayload(canvas: HTMLCanvasElement): { data: string; mimeType: string } {
@@ -210,6 +226,6 @@ export async function extractPageText(
     sentences: allSentences,
     words: allWords,
     analyzedAt: Date.now(),
-    model: [...models].join(", ") || "gemini-3.1-flash-lite",
+    model: [...models].join(", ") || "gemini-3.5-flash-lite",
   };
 }

@@ -1,4 +1,4 @@
-const CACHE = "talktalk-english-v2.1";
+const CACHE = "talktalk-english-v3.2";
 const APP_SHELL = ["/", "/manifest.webmanifest", "/favicon.svg", "/apple-touch-icon.png"];
 
 self.addEventListener("install", (event) => {

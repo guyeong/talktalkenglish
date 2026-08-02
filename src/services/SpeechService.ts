@@ -1,6 +1,7 @@
 export type SpeechEngine = "gemini" | "browser";
 export type SpeechKind = "word" | "sentence" | "story";
 export type VoicePreset = "us-female" | "uk-male" | "au-female";
+export type NarrationStyle = "clear" | "storybook" | "theater";
 
 export const VOICE_PRESETS: Array<{ id: VoicePreset; label: string; locale: string }> = [
   { id: "us-female", label: "미국식 · 여자", locale: "en-US" },
@@ -8,11 +9,18 @@ export const VOICE_PRESETS: Array<{ id: VoicePreset; label: string; locale: stri
   { id: "au-female", label: "호주식 · 여자", locale: "en-AU" },
 ];
 
+export const NARRATION_STYLES: Array<{ id: NarrationStyle; label: string; description: string }> = [
+  { id: "clear", label: "또렷하게", description: "학습용으로 감정을 줄이고 정확하게 읽습니다." },
+  { id: "storybook", label: "동화책처럼", description: "내레이션과 대화를 자연스럽게 구분합니다." },
+  { id: "theater", label: "연극처럼", description: "대사와 장면 감정을 더 크게 표현합니다." },
+];
+
 export interface SpeakOptions {
   rate?: number;
   voicePreset?: VoicePreset;
   engine?: SpeechEngine;
   kind?: SpeechKind;
+  narrationStyle?: NarrationStyle;
   onEnd?: () => void;
   onError?: (message: string) => void;
   onTimeUpdate?: (currentTime: number, duration: number) => void;
@@ -172,11 +180,14 @@ function browserSpeak(text: string, options: SpeakOptions, generation = playback
     return;
   }
   const voicePreset = options.voicePreset ?? "us-female";
+  const narrationStyle = options.narrationStyle ?? "clear";
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = presetLocale(voicePreset);
-  utterance.rate = options.rate ?? 0.86;
-  utterance.pitch = voicePreset === "uk-male" ? 0.92 : 1.04;
+  const baseRate = options.rate ?? 0.86;
+  utterance.rate = narrationStyle === "theater" ? Math.max(0.6, baseRate * 0.96) : baseRate;
+  const basePitch = voicePreset === "uk-male" ? 0.92 : 1.04;
+  utterance.pitch = narrationStyle === "theater" ? basePitch + 0.03 : basePitch;
   utterance.volume = 1;
   utterance.voice = getPreferredVoice(voicePreset) ?? null;
   utterance.onstart = () => {
@@ -220,13 +231,14 @@ async function requestGeminiAudio(text: string, options: SpeakOptions): Promise<
   const rate = options.rate ?? 0.86;
   const kind = options.kind ?? "sentence";
   const voicePreset = options.voicePreset ?? "us-female";
-  const cacheKey = `${voicePreset}|${kind}|${rate.toFixed(2)}|${text}`;
+  const narrationStyle = options.narrationStyle ?? "clear";
+  const cacheKey = `${voicePreset}|${kind}|${narrationStyle}|${rate.toFixed(2)}|${text}`;
   const cached = audioCache.get(cacheKey);
   if (cached) return cached;
   const response = await fetch("/api/tts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text, rate, kind, voicePreset }),
+    body: JSON.stringify({ text, rate, kind, voicePreset, narrationStyle }),
   });
   const raw = await response.text();
   let payload: { data?: string; mimeType?: string; error?: string } = {};

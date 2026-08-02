@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { addBook } from "../services/BookService";
 import type { Book } from "../types/Book";
 import type { Page } from "../types/Page";
+import { normalizeImageFile } from "../utils/imageFormat";
 
 interface Props {
   open: boolean;
@@ -13,6 +14,8 @@ export default function AddBookDialog({ open, onClose, onSaved }: Props) {
   const [title, setTitle] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
+  const [preparingImages, setPreparingImages] = useState(false);
+  const [prepareProgress, setPrepareProgress] = useState("");
   const [error, setError] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -30,17 +33,54 @@ export default function AddBookDialog({ open, onClose, onSaved }: Props) {
       setTitle("");
       setFiles([]);
       setSaving(false);
+      setPreparingImages(false);
+      setPrepareProgress("");
       setError("");
     }
   }, [open]);
 
   if (!open) return null;
 
-  function handleFiles(nextFiles: FileList | null) {
+  async function handleFiles(nextFiles: FileList | null) {
     if (!nextFiles) return;
-    const images = Array.from(nextFiles).filter((file) => file.type.startsWith("image/"));
-    setFiles(images);
-    setError(images.length ? "" : "이미지 파일을 선택해 주세요.");
+
+    const selected = Array.from(nextFiles);
+    const supported = selected.filter((file) =>
+      file.type.startsWith("image/") || /\.(jpe?g|png|webp|avif|heic|heif)$/i.test(file.name),
+    );
+
+    if (!supported.length) {
+      setFiles([]);
+      setError("사진 파일을 선택해 주세요. JPEG, PNG, HEIC, HEIF, WebP, AVIF를 사용할 수 있습니다.");
+      return;
+    }
+
+    setPreparingImages(true);
+    setError("");
+    const prepared: File[] = [];
+    const failed: string[] = [];
+
+    try {
+      for (let index = 0; index < supported.length; index += 1) {
+        const file = supported[index];
+        setPrepareProgress(`${index + 1} / ${supported.length} 사진 준비 중`);
+        try {
+          prepared.push(await normalizeImageFile(file));
+        } catch (conversionError) {
+          console.error(conversionError);
+          failed.push(file.name);
+        }
+      }
+      setFiles(prepared);
+      if (failed.length) {
+        setError(`${failed.length}장의 사진을 변환하지 못했습니다: ${failed.slice(0, 3).join(", ")}`);
+      } else if (selected.length !== supported.length) {
+        setError("지원되지 않는 파일은 제외했습니다. 사진 파일만 선택해 주세요.");
+      }
+    } finally {
+      setPreparingImages(false);
+      setPrepareProgress("");
+    }
   }
 
   async function handleSave() {
@@ -117,7 +157,7 @@ export default function AddBookDialog({ open, onClose, onSaved }: Props) {
         <button className="image-picker" type="button" onClick={() => inputRef.current?.click()}>
           <span className="image-picker-icon">＋</span>
           <strong>사진첩에서 페이지 선택</strong>
-          <small>여러 장을 한 번에 선택할 수 있어요.</small>
+          <small>JPEG·PNG·HEIC·HEIF·WebP·AVIF를 여러 장 선택할 수 있어요.</small>
         </button>
 
         <input
@@ -125,9 +165,14 @@ export default function AddBookDialog({ open, onClose, onSaved }: Props) {
           className="visually-hidden"
           type="file"
           multiple
-          accept="image/*"
-          onChange={(event) => handleFiles(event.target.files)}
+          accept="image/*,.heic,.heif,.HEIC,.HEIF,.webp,.avif"
+          onChange={(event) => {
+            void handleFiles(event.target.files);
+            event.currentTarget.value = "";
+          }}
         />
+
+        {preparingImages && <p className="image-prepare-status" role="status">{prepareProgress || "사진 형식을 확인하는 중…"}</p>}
 
         {previews.length > 0 && (
           <div>
@@ -150,8 +195,8 @@ export default function AddBookDialog({ open, onClose, onSaved }: Props) {
 
         <div className="dialog-actions">
           <button className="secondary-button" type="button" onClick={onClose} disabled={saving}>취소</button>
-          <button className="primary-button" type="button" onClick={handleSave} disabled={saving}>
-            {saving ? "저장 중…" : "책 저장"}
+          <button className="primary-button" type="button" onClick={handleSave} disabled={saving || preparingImages}>
+            {preparingImages ? "사진 준비 중…" : saving ? "저장 중…" : "책 저장"}
           </button>
         </div>
       </section>

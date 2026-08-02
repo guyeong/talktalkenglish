@@ -721,3 +721,210 @@ body { min-height: 100dvh; }
   .reader-page:not(.reader-fullscreen) .reader-stage { height:48dvh; min-height:300px; }
   .reader-side-panel { max-height:30dvh; padding:7px; }
 }
+
+/* v3.1: keep every reader control inside the viewport and support iPhone photo preparation */
+.image-prepare-status {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  color: #24548e;
+  background: #edf5ff;
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.reader-page:not(.reader-fullscreen) {
+  grid-template-areas:
+    "topbar"
+    "toolbar"
+    "workspace"
+    "progress";
+  grid-template-rows: auto auto minmax(0, 1fr) 5px;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+.reader-page:not(.reader-fullscreen) > .reader-topbar { grid-area: topbar; }
+.reader-page:not(.reader-fullscreen) > .reading-toolbar { grid-area: toolbar; }
+.reader-page:not(.reader-fullscreen) > .reader-workspace { grid-area: workspace; }
+.reader-page:not(.reader-fullscreen) > .reader-progress-track { grid-area: progress; }
+
+.reader-page:not(.reader-fullscreen) .reading-toolbar {
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  align-items: stretch;
+  overflow: visible;
+}
+.reader-page:not(.reader-fullscreen) .reading-toolbar > button {
+  min-width: 0;
+  width: 100%;
+  line-height: 1.15;
+  white-space: normal;
+}
+.reader-page:not(.reader-fullscreen) .reading-toolbar .voice-control,
+.reader-page:not(.reader-fullscreen) .reading-toolbar .speed-control {
+  grid-column: span 4;
+  min-width: 0;
+}
+.reader-page:not(.reader-fullscreen) .voice-control select,
+.reader-page:not(.reader-fullscreen) .speed-control input { min-width: 0; }
+
+.reader-page:not(.reader-fullscreen) > .reader-help,
+.reader-page:not(.reader-fullscreen) > .analysis-error,
+.reader-page:not(.reader-fullscreen) > .speech-notice {
+  top: 142px;
+  bottom: auto;
+  pointer-events: none;
+}
+
+@media (max-width: 1100px) {
+  .reader-page:not(.reader-fullscreen) .reading-toolbar {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .reader-page:not(.reader-fullscreen) .reading-toolbar .voice-control,
+  .reader-page:not(.reader-fullscreen) .reading-toolbar .speed-control {
+    grid-column: span 2;
+  }
+  .reader-page:not(.reader-fullscreen) > .reader-help,
+  .reader-page:not(.reader-fullscreen) > .analysis-error,
+  .reader-page:not(.reader-fullscreen) > .speech-notice { top: 184px; }
+}
+
+@media (max-width: 900px) {
+  .reader-page:not(.reader-fullscreen) {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+    grid-template-rows: auto auto minmax(0, 1fr) 5px;
+  }
+  .reader-workspace {
+    grid-template-columns: minmax(0, 1.45fr) minmax(250px, .75fr);
+    overflow: hidden;
+  }
+  .reader-page:not(.reader-fullscreen) .reader-stage {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+  }
+  .reader-side-panel {
+    max-height: none;
+    min-height: 0;
+  }
+}
+
+@media (max-width: 720px) {
+  .reader-page:not(.reader-fullscreen) {
+    padding: 6px;
+    gap: 5px;
+  }
+  .reader-page:not(.reader-fullscreen) .reader-topbar {
+    min-height: 44px;
+    padding: 5px 7px;
+  }
+  .reader-workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1.7fr) minmax(118px, .65fr);
+    gap: 6px;
+  }
+  .reader-side-panel {
+    max-height: none;
+    padding: 6px;
+    border-radius: 13px;
+  }
+  .reader-page:not(.reader-fullscreen) .reading-toolbar {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+    padding: 5px;
+  }
+  .reader-page:not(.reader-fullscreen) .reading-toolbar .primary-button,
+  .reader-page:not(.reader-fullscreen) .reading-toolbar .secondary-button,
+  .reader-page:not(.reader-fullscreen) .reading-toolbar .ai-button {
+    min-height: 35px;
+    padding: 3px 5px;
+    font-size: 10.5px;
+  }
+  .reader-page:not(.reader-fullscreen) .voice-control,
+  .reader-page:not(.reader-fullscreen) .speed-control {
+    min-height: 34px;
+    padding: 2px 5px;
+    font-size: 11px;
+  }
+  .reader-page:not(.reader-fullscreen) > .reader-help,
+  .reader-page:not(.reader-fullscreen) > .analysis-error,
+  .reader-page:not(.reader-fullscreen) > .speech-notice { top: 174px; }
+}
+
+@media (max-width: 430px) {
+  .reader-page:not(.reader-fullscreen) .reading-toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .reader-page:not(.reader-fullscreen) .reading-toolbar .voice-control,
+  .reader-page:not(.reader-fullscreen) .reading-toolbar .speed-control {
+    grid-column: span 2;
+  }
+  .reader-page:not(.reader-fullscreen) .reading-toolbar .primary-button,
+  .reader-page:not(.reader-fullscreen) .reading-toolbar .secondary-button,
+  .reader-page:not(.reader-fullscreen) .reading-toolbar .ai-button {
+    min-height: 32px;
+    font-size: 10px;
+  }
+  .reader-workspace {
+    grid-template-rows: minmax(0, 1.55fr) minmax(105px, .55fr);
+  }
+  .reader-page:not(.reader-fullscreen) > .reader-help,
+  .reader-page:not(.reader-fullscreen) > .analysis-error,
+  .reader-page:not(.reader-fullscreen) > .speech-notice { top: 250px; }
+}
+
+/* v3.2: expressive story narration without adding any OCR work */
+.narration-control {
+  display: grid;
+  grid-template-columns: auto minmax(120px, 210px);
+  align-items: center;
+  gap: 8px;
+  color: #455d7a;
+  font-size: 13px;
+  font-weight: 800;
+}
+.narration-control select {
+  min-height: 40px;
+  min-width: 0;
+  padding: 0 34px 0 11px;
+  border: 1px solid #cbd8e8;
+  border-radius: 11px;
+  color: #234567;
+  background: #f8fbff;
+  font: inherit;
+  cursor: pointer;
+}
+.reader-page:not(.reader-fullscreen) .reading-toolbar .voice-control { grid-column: span 3; }
+.reader-page:not(.reader-fullscreen) .reading-toolbar .narration-control { grid-column: span 2; min-width: 0; }
+.reader-page:not(.reader-fullscreen) .reading-toolbar .speed-control { grid-column: span 3; }
+.reader-page:not(.reader-fullscreen) .narration-control { min-height: 38px; margin: 0; padding: 4px 8px; white-space: nowrap; }
+
+@media (max-width: 1100px) {
+  .reader-page:not(.reader-fullscreen) .reading-toolbar .voice-control,
+  .reader-page:not(.reader-fullscreen) .reading-toolbar .narration-control { grid-column: span 2; }
+  .reader-page:not(.reader-fullscreen) .reading-toolbar .speed-control { grid-column: span 4; }
+}
+
+@media (max-width: 720px) {
+  .narration-control { width: 100%; grid-template-columns: auto 1fr; }
+  .narration-control select { width: 100%; }
+  .reader-page:not(.reader-fullscreen) .voice-control,
+  .reader-page:not(.reader-fullscreen) .narration-control,
+  .reader-page:not(.reader-fullscreen) .speed-control {
+    min-height: 34px;
+    padding: 2px 5px;
+    font-size: 11px;
+  }
+  .reader-page:not(.reader-fullscreen) .reading-toolbar .voice-control,
+  .reader-page:not(.reader-fullscreen) .reading-toolbar .narration-control,
+  .reader-page:not(.reader-fullscreen) .reading-toolbar .speed-control { grid-column: span 2; }
+}
+
+@media (max-width: 430px) {
+  .reader-page:not(.reader-fullscreen) .reading-toolbar .voice-control,
+  .reader-page:not(.reader-fullscreen) .reading-toolbar .narration-control,
+  .reader-page:not(.reader-fullscreen) .reading-toolbar .speed-control { grid-column: span 2; }
+}
