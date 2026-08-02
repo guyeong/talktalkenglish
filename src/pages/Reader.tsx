@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import PageTextEditor from "../components/PageTextEditor";
+import CompletionQuiz, { buildCompletionQuestions } from "../components/CompletionQuiz";
 import ReadingTextLayer from "../components/ReadingTextLayer";
 import { useObjectUrl } from "../hooks/useObjectUrl";
 import { getBook, updateBook } from "../services/BookService";
@@ -53,6 +54,7 @@ export default function Reader({ bookId, onBack }: Props) {
   const [queueRunning, setQueueRunning] = useState(false);
   const [fullscreenMode, setFullscreenMode] = useState(false);
   const [fullscreenControls, setFullscreenControls] = useState(true);
+  const [quizOpen, setQuizOpen] = useState(false);
   const [practiceState, setPracticeState] = useState<"idle" | "listening" | "recording" | "evaluating" | "passed" | "retry" | "error">("idle");
   const [practiceSentence, setPracticeSentence] = useState("");
   const [practiceResult, setPracticeResult] = useState<PronunciationEvaluation | null>(null);
@@ -90,6 +92,13 @@ export default function Reader({ bookId, onBack }: Props) {
   function changeNarrationStyle(value: NarrationStyle) {
     setNarrationStyle(value);
     localStorage.setItem("talktalk.narrationStyle", value);
+    if (value === "reference") {
+      setVoicePreset("us-male");
+      localStorage.setItem("talktalk.voicePreset", "us-male");
+      const referenceRate = 0.9;
+      setRate(referenceRate);
+      localStorage.setItem("talktalk.speechRate", String(referenceRate));
+    }
     const style = NARRATION_STYLES.find((item) => item.id === value);
     setSpeechNotice(`${style?.label ?? "선택한 낭독"} 모드: ${style?.description ?? ""}`.trim());
   }
@@ -140,6 +149,8 @@ export default function Reader({ bookId, onBack }: Props) {
   const analysis = currentPage?.analysis;
   const storySentences = useMemo(() => analysis?.sentences.map((item) => item.text).filter(Boolean) ?? splitSentences(currentText), [analysis, currentText]);
   const analyzing = currentPage?.status === "processing";
+  const readPageIds = book?.readPageIds ?? [];
+  const quizQuestionCount = book ? buildCompletionQuestions(book).length : 0;
 
   useEffect(() => {
     if (readingMode === "idle") return;
@@ -151,6 +162,43 @@ export default function Reader({ bookId, onBack }: Props) {
   async function persistBook(nextBook: Book) {
     setBook(nextBook);
     await updateBook(nextBook);
+  }
+
+  async function recordCurrentPageRead() {
+    if (!book || !currentPage) {
+      finishReading();
+      return;
+    }
+    const nextReadPageIds = [...new Set([...(book.readPageIds ?? []), currentPage.id])];
+    const allRead = orderedPages.length > 0 && orderedPages.every((page) => nextReadPageIds.includes(page.id));
+    const nextBook: Book = {
+      ...book,
+      readPageIds: nextReadPageIds,
+      completedAt: allRead ? (book.completedAt ?? Date.now()) : book.completedAt,
+      progress: allRead ? 100 : book.progress,
+      updatedAt: Date.now(),
+    };
+    await persistBook(nextBook);
+    finishReading();
+    if (allRead && quizQuestionCount > 0) {
+      setQuizOpen(true);
+    } else {
+      setSpeechNotice(`${pageIndex + 1}페이지를 끝까지 읽었어요. 읽은 페이지 ${nextReadPageIds.length} / ${orderedPages.length}`);
+    }
+  }
+
+  async function handleQuizComplete(score: number, total: number) {
+    if (!book) return;
+    const best = Math.max(book.quizBestScore ?? 0, score);
+    await persistBook({
+      ...book,
+      completedAt: book.completedAt ?? Date.now(),
+      quizBestScore: best,
+      quizAttempts: (book.quizAttempts ?? 0) + 1,
+      progress: 100,
+      updatedAt: Date.now(),
+    });
+    setSpeechNotice(`완독 퀴즈 ${score} / ${total}점! 최고 점수는 ${best}점이에요.`);
   }
 
   async function moveTo(nextIndex: number) {
@@ -451,7 +499,7 @@ export default function Reader({ bookId, onBack }: Props) {
   function playStorySentence(index: number) {
     const sentences = storySentencesRef.current;
     if (!sentences.length || index >= sentences.length) {
-      finishReading();
+      void recordCurrentPageRead();
       return;
     }
     const safeIndex = Math.max(0, Math.min(sentences.length - 1, index));
@@ -472,7 +520,7 @@ export default function Reader({ bookId, onBack }: Props) {
         if (readingPausedRef.current) return;
         const next = safeIndex + 1;
         if (next >= sentences.length) {
-          finishReading();
+          void recordCurrentPageRead();
           return;
         }
         storyNextIndex.current = next;
@@ -518,7 +566,7 @@ export default function Reader({ bookId, onBack }: Props) {
     const sentences = followSentences.current;
     const index = followIndex.current;
     if (index >= sentences.length) {
-      speakKoreanFeedback("오늘 따라 읽기를 모두 마쳤어요. 정말 잘했어요!", finishReading);
+      speakKoreanFeedback("오늘 따라 읽기를 모두 마쳤어요. 정말 잘했어요!", () => void recordCurrentPageRead());
       return;
     }
 
@@ -571,7 +619,7 @@ export default function Reader({ bookId, onBack }: Props) {
     const sentences = followSentences.current;
     const index = followIndex.current;
     if (index >= sentences.length) {
-      speakKoreanFeedback("따라 읽기를 모두 마쳤어요!", finishReading);
+      speakKoreanFeedback("따라 읽기를 모두 마쳤어요!", () => void recordCurrentPageRead());
       return;
     }
     const sentence = sentences[index];
@@ -725,7 +773,14 @@ export default function Reader({ bookId, onBack }: Props) {
         <button className="reader-back-button" type="button" onClick={onBack}>← 책장</button>
         <div className="reader-title-block"><strong>{book.title}</strong><span>{orderedPages.length ? `${pageIndex + 1} / ${orderedPages.length} 페이지` : "페이지 없음"}</span></div>
         <div className="reader-top-actions">
+          <button className="top-page-button first-page-button" type="button" disabled={isFirst} onClick={() => void moveTo(0)} aria-label="첫 페이지로 이동">⏮ 처음</button>
           <button className="top-page-button" type="button" disabled={isFirst} onClick={() => void moveTo(pageIndex - 1)} aria-label="이전 페이지">‹ 이전</button>
+          <label className="page-jump-control">
+            <span className="visually-hidden">원하는 페이지로 이동</span>
+            <select value={pageIndex} onChange={(event) => void moveTo(Number(event.target.value))} aria-label="원하는 페이지로 이동">
+              {orderedPages.map((page, index) => <option key={page.id} value={index}>{index + 1} / {orderedPages.length}</option>)}
+            </select>
+          </label>
           <span className="reader-progress-pill">{book.progress}%</span>
           <button className="top-page-button primary" type="button" disabled={isLast} onClick={() => void moveTo(pageIndex + 1)} aria-label="다음 페이지">다음 ›</button>
           <button className="fullscreen-button" type="button" onClick={() => void enterFullscreen()} aria-label="책을 전체 화면으로 보기">⛶ 전체 화면</button>
@@ -839,6 +894,8 @@ export default function Reader({ bookId, onBack }: Props) {
             <button className="secondary-button pause-resume-button" type="button" disabled={readingMode === "idle"} onClick={togglePauseResume}>{readingPaused ? "▶ 계속 읽기" : "⏸ 멈춤"}</button>
             <button className="secondary-button" type="button" onClick={() => setEditorOpen(true)}>{currentText ? "텍스트 수정" : "직접 입력"}</button>
             {analysis && <button className="secondary-button" type="button" onClick={() => setShowBoxes((value) => !value)}>{showBoxes ? "터치 영역 숨기기" : "터치 영역 보기"}</button>}
+            {isLast && <button className="quiz-launch-button" type="button" disabled={quizQuestionCount === 0} onClick={() => setQuizOpen(true)}>🎉 완독 퀴즈</button>}
+            <span className="read-page-count" title="끝까지 읽은 페이지">📖 {readPageIds.length} / {orderedPages.length}</span>
             <label className="voice-control">음성 <select value={voicePreset} onChange={(event) => changeVoicePreset(event.target.value as VoicePreset)}>{VOICE_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}</select></label>
             <label className="narration-control">낭독 <select value={narrationStyle} onChange={(event) => changeNarrationStyle(event.target.value as NarrationStyle)}>{NARRATION_STYLES.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}</select></label>
             <label className="speed-control">속도 <input type="range" min="0.5" max="2" step="0.05" value={rate} onChange={(event) => changeRate(Number(event.target.value))} /><span>{rate.toFixed(2)}x</span></label>
@@ -856,15 +913,20 @@ export default function Reader({ bookId, onBack }: Props) {
 
           <div className="reader-progress-track" aria-label={`책 진행률 ${book.progress}%`}><div className="reader-progress-value" style={{ width: `${book.progress}%` }} /></div>
           <nav className="reader-controls" aria-label="페이지 이동">
-            <button className="secondary-button reader-nav-button" type="button" disabled={isFirst} onClick={() => void moveTo(pageIndex - 1)}>← 이전 페이지</button>
-            <button className="primary-button reader-nav-button" type="button" disabled={isLast} onClick={() => void moveTo(pageIndex + 1)}>다음 페이지 →</button>
+            <button className="secondary-button reader-nav-button" type="button" disabled={isFirst} onClick={() => void moveTo(0)}>⏮ 첫 페이지</button>
+            <button className="secondary-button reader-nav-button" type="button" disabled={isFirst} onClick={() => void moveTo(pageIndex - 1)}>← 이전</button>
+            <label className="reader-bottom-page-select">페이지 <select value={pageIndex} onChange={(event) => void moveTo(Number(event.target.value))}>{orderedPages.map((page, index) => <option key={page.id} value={index}>{index + 1}</option>)}</select> / {orderedPages.length}</label>
+            {isLast ? <button className="quiz-launch-button reader-nav-button" type="button" disabled={quizQuestionCount === 0} onClick={() => setQuizOpen(true)}>🎉 완독 퀴즈</button> : <button className="primary-button reader-nav-button" type="button" onClick={() => void moveTo(pageIndex + 1)}>다음 →</button>}
           </nav>
 
           {fullscreenMode && (
             <>
               <div className="fullscreen-top-controls" aria-label="전체 화면 상단 도구">
                 <button type="button" className="fullscreen-round-button" onClick={() => void exitFullscreen()} aria-label="전체 화면 종료">✕</button>
-                <div className="fullscreen-page-title"><strong>{book.title}</strong><span>{pageIndex + 1} / {orderedPages.length}</span></div>
+                <div className="fullscreen-page-title">
+                  <strong>{book.title}</strong>
+                  <label className="fullscreen-page-jump">페이지 <select value={pageIndex} onChange={(event) => void moveTo(Number(event.target.value))}>{orderedPages.map((page, index) => <option key={page.id} value={index}>{index + 1}</option>)}</select> / {orderedPages.length}</label>
+                </div>
                 <button type="button" className="fullscreen-round-button" onClick={() => setFullscreenControls((value) => !value)} aria-label="컨트롤 표시 또는 숨기기">{fullscreenControls ? "◉" : "○"}</button>
               </div>
 
@@ -902,6 +964,7 @@ export default function Reader({ bookId, onBack }: Props) {
             </>
           )}
 
+          {quizOpen && <CompletionQuiz book={book} onClose={() => setQuizOpen(false)} onComplete={(score, total) => void handleQuizComplete(score, total)} />}
           <PageTextEditor open={editorOpen} initialText={currentText} pageNumber={pageIndex + 1} onClose={() => setEditorOpen(false)} onSave={savePageText} />
         </>
       )}

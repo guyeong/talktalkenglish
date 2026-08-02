@@ -7,4 +7,9 @@ export interface Book {
   createdAt: number;
   updatedAt: number;
   progress: number;
+  /** Page ids that were read to the end. */
+  readPageIds?: string[];
+  completedAt?: number;
+  quizBestScore?: number;
+  quizAttempts?: number;
 }

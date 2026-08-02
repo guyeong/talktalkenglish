@@ -1,16 +1,18 @@
 export type SpeechEngine = "gemini" | "browser";
 export type SpeechKind = "word" | "sentence" | "story";
-export type VoicePreset = "us-female" | "uk-male" | "au-female";
-export type NarrationStyle = "clear" | "storybook" | "theater";
+export type VoicePreset = "us-female" | "us-male" | "uk-male" | "au-female";
+export type NarrationStyle = "clear" | "reference" | "storybook" | "theater";
 
 export const VOICE_PRESETS: Array<{ id: VoicePreset; label: string; locale: string }> = [
   { id: "us-female", label: "미국식 · 여자", locale: "en-US" },
+  { id: "us-male", label: "미국식 · 남자", locale: "en-US" },
   { id: "uk-male", label: "영국식 · 남자", locale: "en-GB" },
   { id: "au-female", label: "호주식 · 여자", locale: "en-AU" },
 ];
 
 export const NARRATION_STYLES: Array<{ id: NarrationStyle; label: string; description: string }> = [
   { id: "clear", label: "또렷하게", description: "등장인물 연기 없이 일정한 톤으로 정확하게 읽습니다." },
+  { id: "reference", label: "교재 음원처럼", description: "업로드한 학교 음원의 차분한 속도, 강세와 문장 억양을 참고합니다." },
   { id: "storybook", label: "동화책처럼", description: "따뜻한 내레이션과 대화체 억양을 확실히 구분합니다." },
   { id: "theater", label: "연극처럼", description: "속삭임·놀람·긴장·외침을 크게 살려 연기합니다." },
 ];
@@ -78,6 +80,7 @@ function voiceScore(voice: SpeechSynthesisVoice, preset: VoicePreset): number {
   let score = language === target ? 120 : language.startsWith(target) ? 110 : language.startsWith("en") ? 10 : 0;
   const preferredNames: Record<VoicePreset, string[]> = {
     "us-female": ["aria", "jenny", "ava", "samantha", "zira", "google us english"],
+    "us-male": ["guy", "david", "mark", "christopher", "andrew", "google us english male"],
     "uk-male": ["ryan", "george", "daniel", "oliver", "arthur", "google uk english male"],
     "au-female": ["natasha", "karen", "catherine", "matilda", "google australian english"],
   };
@@ -220,6 +223,20 @@ function browserPerformance(text: string, options: SpeakOptions): { rate: number
 
   if (style === "clear") {
     return { rate, pitch, volume };
+  }
+
+  if (style === "reference") {
+    // The uploaded school recording uses a calm classroom-reading cadence:
+    // clearly stressed content words, restrained emotion and audible phrase boundaries.
+    rate *= 0.94;
+    pitch = preset === "us-male" || preset === "uk-male" ? 0.96 : 1.02;
+    if (quoted) { pitch += 0.07; rate *= 0.98; }
+    if (question) { pitch += 0.1; rate *= 0.96; }
+    if (exclamation) { pitch += 0.07; rate *= 1.01; }
+    if (/whisper|murmur|softly|quietly/.test(lower)) { volume = 0.78; pitch -= 0.06; rate *= 0.92; }
+    if (/shout|yell|scream|roared/.test(lower)) { pitch += 0.1; rate *= 1.02; }
+    if (/sad|sob|tear|lonely/.test(lower)) { pitch -= 0.07; rate *= 0.94; }
+    if (/laugh|giggl|happy|delighted/.test(lower)) { pitch += 0.09; rate *= 1.01; }
   }
 
   if (style === "storybook") {

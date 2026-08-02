@@ -10,6 +10,12 @@ const PRESETS = {
     accent: "native General American accent",
     profile: "a warm, friendly adult woman reading clearly to a child",
   },
+  "us-male": {
+    voice: "Iapetus",
+    languageCode: "en-US",
+    accent: "native General American accent",
+    profile: "a calm adult man recording a clear elementary-school English listening track",
+  },
   "uk-male": {
     voice: "Iapetus",
     languageCode: "en-GB",
@@ -47,6 +53,15 @@ function emotionCue(text, narrationStyle) {
   const question = /\?/.test(text);
   const exclamation = /!/.test(text);
 
+  if (narrationStyle === "reference") {
+    if (/whisper|murmur|softly|quietly/.test(lower)) return "[quietly, with careful textbook diction]";
+    if (/shout|yell|scream|cried out|roared/.test(lower)) return "[firmly, with controlled emphasis]";
+    if (question) return quoted ? "[conversationally, with a clear question contour]" : "[with a clear question contour]";
+    if (exclamation) return "[brightly, with controlled emphasis]";
+    if (quoted) return "[natural classroom dialogue, slightly brighter than narration]";
+    return "[calm school-listening-track narration]";
+  }
+
   if (/whisper|murmur|softly|quietly/.test(lower)) return "[whispers, gently]";
   if (/shout|yell|scream|cried out|roared/.test(lower)) return narrationStyle === "theater" ? "[shouting, urgent]" : "[excited, urgent]";
   if (/trembl|afraid|scared|fright|terrified|nervous/.test(lower)) return "[trembling, cautiously]";
@@ -62,6 +77,18 @@ function emotionCue(text, narrationStyle) {
 }
 
 function styleDirections(narrationStyle) {
+  if (narrationStyle === "reference") {
+    return [
+      "Read like a professionally recorded elementary-school English listening track.",
+      "Use a calm General American classroom pronunciation with crisp consonants, natural linking, and clearly reduced unstressed function words.",
+      "Keep the pace steady and easy to shadow, roughly 135 to 150 words per minute before the user's playback-rate adjustment.",
+      "Stress the important content words clearly, while keeping articles, prepositions, and auxiliary verbs lighter.",
+      "Use short audible phrase breaks at commas and clause boundaries, then a clean half-second transition between sentences supplied by the app.",
+      "Let statements finish with a gentle downward contour, yes-or-no questions rise clearly, and wh-questions usually fall.",
+      "Quoted dialogue should sound conversational and slightly brighter than narration, but never theatrical or exaggerated.",
+      "The result must sound like a polished school textbook recording rather than an audiobook performance.",
+    ].join(" ");
+  }
   if (narrationStyle === "theater") {
     return [
       "Perform as a vivid children's stage actor, not as a neutral reader.",
@@ -167,7 +194,7 @@ export default async (request) => {
     if (clean.length > 3000) return json({ error: "한 번에 읽을 텍스트가 너무 깁니다." }, 400);
 
     const preset = PRESETS[voicePreset] ?? PRESETS["us-female"];
-    const safeStyle = ["clear", "storybook", "theater"].includes(narrationStyle) ? narrationStyle : "storybook";
+    const safeStyle = ["clear", "reference", "storybook", "theater"].includes(narrationStyle) ? narrationStyle : "storybook";
     const instruction = buildInstruction({ clean, rate, kind, preset, narrationStyle: safeStyle });
 
     const ai = new GoogleGenAI({ apiKey });
