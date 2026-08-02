@@ -601,6 +601,7 @@ export default function Reader({ bookId, onBack }: Props) {
     pauseSpeech();
   }
 
+
   useEffect(() => {
     function syncFullscreenState() {
       const active = Boolean(document.fullscreenElement);
@@ -661,20 +662,110 @@ export default function Reader({ bookId, onBack }: Props) {
         <button className="reader-back-button" type="button" onClick={onBack}>← 책장</button>
         <div className="reader-title-block"><strong>{book.title}</strong><span>{orderedPages.length ? `${pageIndex + 1} / ${orderedPages.length} 페이지` : "페이지 없음"}</span></div>
         <div className="reader-top-actions">
+          <button className="top-page-button" type="button" disabled={isFirst} onClick={() => void moveTo(pageIndex - 1)} aria-label="이전 페이지">‹ 이전</button>
           <span className="reader-progress-pill">{book.progress}%</span>
+          <button className="top-page-button primary" type="button" disabled={isLast} onClick={() => void moveTo(pageIndex + 1)} aria-label="다음 페이지">다음 ›</button>
           <button className="fullscreen-button" type="button" onClick={() => void enterFullscreen()} aria-label="책을 전체 화면으로 보기">⛶ 전체 화면</button>
         </div>
       </div>
 
       {orderedPages.length === 0 ? <div className="reader-message">이 책에는 등록된 페이지가 없습니다.</div> : (
         <>
-          <section className="reader-stage" aria-label={`${pageIndex + 1}페이지`}>
-            <ReaderImage image={currentPage?.image} title={book.title} pageNumber={pageIndex + 1}>
-              {analysis && <ReadingTextLayer analysis={analysis} rate={rate} showBoxes={showBoxes} speechEngine={speechEngine} voicePreset={voicePreset} onSpeechError={handleSpeechError} />}
-            </ReaderImage>
-            <div className="reader-page-badge">{pageIndex + 1}</div>
-            {(analyzing || queueRunning) && <div className="analysis-mask"><span className="analysis-spinner" />{analysisProgress?.label || "AI가 글자를 읽고 있습니다…"}{analysisProgress && <small>{analysisProgress.completed} / {analysisProgress.total}</small>}</div>}
-          </section>
+          <div className="reader-workspace">
+            <section className="reader-stage" aria-label={`${pageIndex + 1}페이지`}>
+              <ReaderImage image={currentPage?.image} title={book.title} pageNumber={pageIndex + 1}>
+                {analysis && <ReadingTextLayer analysis={analysis} rate={rate} showBoxes={showBoxes} speechEngine={speechEngine} voicePreset={voicePreset} onSpeechError={handleSpeechError} />}
+              </ReaderImage>
+              <div className="reader-page-badge">{pageIndex + 1}</div>
+              {(analyzing || queueRunning) && <div className="analysis-mask"><span className="analysis-spinner" />{analysisProgress?.label || "AI가 글자를 읽고 있습니다…"}{analysisProgress && <small>{analysisProgress.completed} / {analysisProgress.total}</small>}</div>}
+            </section>
+            <aside className="reader-side-panel" aria-label="읽기 위치와 평가">
+              <div className="side-panel-title"><strong>읽기 안내</strong><span>{activeSentenceIndex + 1} / {Math.max(1, storySentences.length)}</span></div>
+              {readingMode !== "idle" && activeSentence && (
+                <section className="reading-follow-panel" aria-live="polite">
+                  <div className="reading-follow-header">
+                    <strong>{readingMode === "story" ? "전체 읽기" : readingMode === "follow" ? "따라 읽기" : "따라 읽기 평가"}</strong>
+                    <span>{activeSentenceIndex + 1} / {storySentences.length}</span>
+                  </div>
+                  <p className="reading-follow-current">{activeSentence}</p>
+                  <div className="reading-follow-sentences" aria-label="읽는 문장 따라보기">
+                    {storySentences.map((sentence, index) => (
+                      <button
+                            key={`${index}-${sentence}`}
+                            type="button"
+                            data-reading-sentence={index}
+                            className={index === activeSentenceIndex ? "is-active" : index < activeSentenceIndex ? "is-complete" : ""}
+                            onClick={() => startStoryFromScroll(index)}
+                      >
+                            <span>{index + 1}</span>{sentence}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              )}
+              {readingMode === "evaluate" && practiceSentence && (
+                <section className={`practice-panel practice-${practiceState}`} aria-live="polite">
+                  <div className="practice-panel-header">
+                    <strong>따라 읽기 평가</strong>
+                    <span>{followIndex.current + 1} / {followSentences.current.length}</span>
+                  </div>
+                  <p className="practice-target">{practiceSentence}</p>
+                  {microphonePermission !== "granted" && (
+                    <p className="microphone-permission-hint">🎙️ 따라 읽기를 시작하면 브라우저가 마이크 권한을 요청합니다. 반드시 “허용”을 눌러 주세요.</p>
+                  )}
+                  <div className="practice-status-row">
+                    {practiceState === "listening" && <span>🔊 문장을 잘 들어보세요.</span>}
+                    {practiceState === "recording" && <span className="recording-status"><i /> 녹음 중 · {recordingSeconds}초</span>}
+                    {practiceState === "evaluating" && <span>⚡ 빠르게 점수를 계산하고 있어요…</span>}
+                    {practiceState === "passed" && <span>🎉 90점 이상, 통과했어요!</span>}
+                    {practiceState === "retry" && <span>🔁 90점 이상이 될 때까지 다시 연습해요.</span>}
+                    {practiceState === "error" && <span>⚠️ 다시 시도할게요.</span>}
+                    {practiceAttempt > 0 && <small>도전 {practiceAttempt + 1}회</small>}
+                  </div>
+                  {practiceState === "recording" && <button className="finish-speaking-button" type="button" onClick={finishSpeakingNow}>말하기 완료</button>}
+                  {practiceResult && (
+                    <div className="practice-result-grid">
+                      <div><strong>{practiceResult.overallScore}</strong><span>종합 점수</span></div>
+                      <div><strong>{practiceResult.accuracyScore}</strong><span>단어 정확도</span></div>
+                      <div><strong>{practiceResult.pronunciationScore}</strong><span>발음 명료도</span></div>
+                      <p><b>인식된 문장:</b> {practiceResult.transcript || "인식되지 않음"}</p>
+                      {practiceResult.missedWords.length > 0 && <p><b>다시 볼 단어:</b> {practiceResult.missedWords.join(", ")}</p>}
+                    </div>
+                  )}
+                </section>
+              )}
+              {storySentences.length > 0 && (
+                <section className="page-reading-scroll" aria-label="현재 페이지 읽기 위치">
+                  <div className="page-reading-scroll-header">
+                    <strong>페이지 읽기 위치</strong>
+                    <span>{storySentenceIndex + 1} / {storySentences.length} 문장</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max={Math.max(0, storySentences.length - 1)}
+                    step="1"
+                    value={Math.min(storySentenceIndex, Math.max(0, storySentences.length - 1))}
+                    onChange={(event) => setStorySentenceIndex(Number(event.target.value))}
+                    onPointerUp={(event) => startStoryFromScroll(Number((event.currentTarget as HTMLInputElement).value))}
+                    onKeyUp={(event) => {
+                      if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) startStoryFromScroll(Number(event.currentTarget.value));
+                    }}
+                  />
+                  <div className="page-reading-scroll-progress" aria-hidden="true"><span style={{ width: `${((storySentenceIndex + storyAudioProgress) / Math.max(1, storySentences.length)) * 100}%` }} /></div>
+                  <p>{storySentences[storySentenceIndex] ?? ""}</p>
+                </section>
+              )}
+
+
+              {readingMode === "idle" && (
+                <div className="reader-side-empty">
+                  <strong>사진을 보며 바로 시작하세요.</strong>
+                  <p>전체 읽기, 따라 읽기 또는 평가를 누르면 현재 문장이 이곳에 표시됩니다.</p>
+                </div>
+              )}
+            </aside>
+          </div>
 
           <section className="reading-toolbar" aria-label="읽기 도구">
             <button className="ai-button" type="button" disabled={analyzing || queueRunning} onClick={() => void runAiAnalysis()}>{analyzing ? "분석 중…" : analysis ? "↻ 현재 페이지 재인식" : "✨ 현재 페이지 인식"}</button>
@@ -691,84 +782,8 @@ export default function Reader({ bookId, onBack }: Props) {
 
           {analysisError && <p className="analysis-error" role="alert">{analysisError}</p>}
           {speechNotice && <p className="speech-notice" role="status">{speechNotice}</p>}
-          {readingMode !== "idle" && activeSentence && (
-            <section className="reading-follow-panel" aria-live="polite">
-              <div className="reading-follow-header">
-                <strong>{readingMode === "story" ? "전체 읽기" : readingMode === "follow" ? "따라 읽기" : "따라 읽기 평가"}</strong>
-                <span>{activeSentenceIndex + 1} / {storySentences.length}</span>
-              </div>
-              <p className="reading-follow-current">{activeSentence}</p>
-              <div className="reading-follow-sentences" aria-label="읽는 문장 따라보기">
-                {storySentences.map((sentence, index) => (
-                  <button
-                    key={`${index}-${sentence}`}
-                    type="button"
-                    data-reading-sentence={index}
-                    className={index === activeSentenceIndex ? "is-active" : index < activeSentenceIndex ? "is-complete" : ""}
-                    onClick={() => startStoryFromScroll(index)}
-                  >
-                    <span>{index + 1}</span>{sentence}
-                  </button>
-                ))}
-              </div>
-            </section>
-          )}
-          {readingMode === "evaluate" && practiceSentence && (
-            <section className={`practice-panel practice-${practiceState}`} aria-live="polite">
-              <div className="practice-panel-header">
-                <strong>따라 읽기 평가</strong>
-                <span>{followIndex.current + 1} / {followSentences.current.length}</span>
-              </div>
-              <p className="practice-target">{practiceSentence}</p>
-              {microphonePermission !== "granted" && (
-                <p className="microphone-permission-hint">🎙️ 따라 읽기를 시작하면 브라우저가 마이크 권한을 요청합니다. 반드시 “허용”을 눌러 주세요.</p>
-              )}
-              <div className="practice-status-row">
-                {practiceState === "listening" && <span>🔊 문장을 잘 들어보세요.</span>}
-                {practiceState === "recording" && <span className="recording-status"><i /> 녹음 중 · {recordingSeconds}초</span>}
-                {practiceState === "evaluating" && <span>⚡ 빠르게 점수를 계산하고 있어요…</span>}
-                {practiceState === "passed" && <span>🎉 90점 이상, 통과했어요!</span>}
-                {practiceState === "retry" && <span>🔁 90점 이상이 될 때까지 다시 연습해요.</span>}
-                {practiceState === "error" && <span>⚠️ 다시 시도할게요.</span>}
-                {practiceAttempt > 0 && <small>도전 {practiceAttempt + 1}회</small>}
-              </div>
-              {practiceState === "recording" && <button className="finish-speaking-button" type="button" onClick={finishSpeakingNow}>말하기 완료</button>}
-              {practiceResult && (
-                <div className="practice-result-grid">
-                  <div><strong>{practiceResult.overallScore}</strong><span>종합 점수</span></div>
-                  <div><strong>{practiceResult.accuracyScore}</strong><span>단어 정확도</span></div>
-                  <div><strong>{practiceResult.pronunciationScore}</strong><span>발음 명료도</span></div>
-                  <p><b>인식된 문장:</b> {practiceResult.transcript || "인식되지 않음"}</p>
-                  {practiceResult.missedWords.length > 0 && <p><b>다시 볼 단어:</b> {practiceResult.missedWords.join(", ")}</p>}
-                </div>
-              )}
-            </section>
-          )}
           {!currentText && !analysisError && <p className="reader-help">“현재 페이지 인식” 또는 “미분석 페이지 모두”를 누르면 문장과 단어 위치를 자동으로 찾습니다. 두 쪽이 함께 찍힌 사진은 좌우로 나눠 빠르게 분석합니다.</p>}
           {analysis && <p className="reader-help">파란 단어 영역을 누르면 단어 발음, 문장 영역을 누르면 문장 전체 발음이 재생됩니다.</p>}
-
-          {storySentences.length > 0 && (
-            <section className="page-reading-scroll" aria-label="현재 페이지 읽기 위치">
-              <div className="page-reading-scroll-header">
-                <strong>페이지 읽기 위치</strong>
-                <span>{storySentenceIndex + 1} / {storySentences.length} 문장</span>
-              </div>
-              <input
-                type="range"
-                min="0"
-                max={Math.max(0, storySentences.length - 1)}
-                step="1"
-                value={Math.min(storySentenceIndex, Math.max(0, storySentences.length - 1))}
-                onChange={(event) => setStorySentenceIndex(Number(event.target.value))}
-                onPointerUp={(event) => startStoryFromScroll(Number((event.currentTarget as HTMLInputElement).value))}
-                onKeyUp={(event) => {
-                  if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) startStoryFromScroll(Number(event.currentTarget.value));
-                }}
-              />
-              <div className="page-reading-scroll-progress" aria-hidden="true"><span style={{ width: `${((storySentenceIndex + storyAudioProgress) / Math.max(1, storySentences.length)) * 100}%` }} /></div>
-              <p>{storySentences[storySentenceIndex] ?? ""}</p>
-            </section>
-          )}
 
           <div className="reader-progress-track" aria-label={`책 진행률 ${book.progress}%`}><div className="reader-progress-value" style={{ width: `${book.progress}%` }} /></div>
           <nav className="reader-controls" aria-label="페이지 이동">
