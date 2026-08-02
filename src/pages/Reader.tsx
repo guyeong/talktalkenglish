@@ -21,22 +21,34 @@ function ReaderImage({ image, title, pageNumber, children }: { image?: Blob; tit
     const area = fitAreaRef.current;
     if (!area || naturalSize.width <= 0 || naturalSize.height <= 0) return;
 
+    let frame = 0;
     const updateSize = () => {
-      const rect = area.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) return;
-      const scale = Math.min(rect.width / naturalSize.width, rect.height / naturalSize.height);
-      setDisplaySize({
-        width: Math.max(1, Math.floor(naturalSize.width * scale)),
-        height: Math.max(1, Math.floor(naturalSize.height * scale)),
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        const rect = area.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return;
+        const availableWidth = Math.max(1, rect.width - 24);
+        const availableHeight = Math.max(1, rect.height - 24);
+        const scale = Math.min(
+          availableWidth / naturalSize.width,
+          availableHeight / naturalSize.height,
+        );
+        setDisplaySize({
+          width: Math.max(1, Math.floor(naturalSize.width * scale)),
+          height: Math.max(1, Math.floor(naturalSize.height * scale)),
+        });
       });
     };
 
     updateSize();
     const observer = new ResizeObserver(updateSize);
     observer.observe(area);
+    window.addEventListener("resize", updateSize);
     window.addEventListener("orientationchange", updateSize);
     return () => {
+      window.cancelAnimationFrame(frame);
       observer.disconnect();
+      window.removeEventListener("resize", updateSize);
       window.removeEventListener("orientationchange", updateSize);
     };
   }, [naturalSize.height, naturalSize.width, url]);

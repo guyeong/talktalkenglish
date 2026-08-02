@@ -1291,16 +1291,24 @@ body { min-height: 100dvh; }
   .completion-question h2 { font-size: 18px; }
 }
 
-/* v3.6.1: always fit the complete original photo inside the study area. */
+/* v3.6.2: force the complete original photo into the visible study area. */
+.reader-page:not(.reader-fullscreen) .reader-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0;
+}
 .reader-image-fit-area {
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  inset: 6px;
   min-width: 0;
   min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  box-sizing: border-box;
 }
 .reader-image-fit-area .reader-image-frame {
   position: relative;
@@ -1308,7 +1316,9 @@ body { min-height: 100dvh; }
   display: block;
   max-width: 100%;
   max-height: 100%;
+  overflow: hidden;
   line-height: 0;
+  box-sizing: border-box;
 }
 .reader-image-fit-area .reader-image-frame .reader-image {
   display: block;
@@ -1316,18 +1326,14 @@ body { min-height: 100dvh; }
   height: 100%;
   max-width: none;
   max-height: none;
-  object-fit: fill;
+  object-fit: contain;
+  object-position: center;
 }
 .reader-image-fit-area .coordinate-overlay { position: absolute; inset: 0; }
-.reader-page:not(.reader-fullscreen) .reader-stage {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  padding: 6px;
-}
 .reader-fullscreen .reader-image-fit-area {
-  width: 100vw;
-  height: 100dvh;
+  position: absolute;
+  inset: 0;
+  width: auto;
+  height: auto;
   background: #05090f;
 }

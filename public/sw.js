@@ -1,4 +1,4 @@
-const CACHE = "talktalk-english-v3.5";
+const CACHE = "talktalk-english-v3.6.2";
 const APP_SHELL = ["/", "/manifest.webmanifest", "/favicon.svg", "/apple-touch-icon.png"];
 
 self.addEventListener("install", (event) => {
@@ -17,4 +17,8 @@ self.addEventListener("fetch", (event) => {
     caches.open(CACHE).then((cache) => cache.put(event.request, copy));
     return response;
   }).catch(() => caches.match(event.request).then((cached) => cached || caches.match("/"))));
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
 });
