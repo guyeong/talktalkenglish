@@ -49,6 +49,8 @@ let pauseRequested = false;
 let pendingSpeech = false;
 let pausedAudioPosition = 0;
 let lastSpeechRequest: LastSpeechRequest | null = null;
+let browserSequenceTimer: number | null = null;
+let browserSequenceResume: (() => void) | null = null;
 
 const GEMINI_TTS_COOLDOWN_KEY = "talktalk.geminiTtsCooldownUntil";
 const GEMINI_TTS_FAILURES_KEY = "talktalk.geminiTtsFailures";
@@ -188,6 +190,11 @@ function cancelCurrentPlayback(clearLastRequest = false): void {
   pendingSpeech = false;
   pausedAudioPosition = 0;
   if (clearLastRequest) lastSpeechRequest = null;
+  if (browserSequenceTimer) {
+    window.clearTimeout(browserSequenceTimer);
+    browserSequenceTimer = null;
+  }
+  browserSequenceResume = null;
   if ("speechSynthesis" in window) window.speechSynthesis.cancel();
   if (currentAudio) {
     detachAudio(currentAudio);
@@ -202,6 +209,10 @@ export function stopSpeech(): void {
 
 export function pauseSpeech(): boolean {
   pauseRequested = true;
+  if (browserSequenceTimer) {
+    window.clearTimeout(browserSequenceTimer);
+    browserSequenceTimer = null;
+  }
   if (currentAudio) {
     pausedAudioPosition = Number.isFinite(currentAudio.currentTime) ? currentAudio.currentTime : pausedAudioPosition;
     if (!currentAudio.paused) currentAudio.pause();
@@ -259,6 +270,12 @@ function recreateAudioAt(position: number): boolean {
 
 export function resumeSpeech(): boolean {
   pauseRequested = false;
+  if (browserSequenceResume) {
+    const resume = browserSequenceResume;
+    browserSequenceResume = null;
+    resume();
+    return true;
+  }
   if (currentAudio && currentAudio.paused && !currentAudio.ended) {
     const position = Number.isFinite(currentAudio.currentTime) ? currentAudio.currentTime : pausedAudioPosition;
     pausedAudioPosition = position;
@@ -348,38 +365,149 @@ function browserPerformance(text: string, options: SpeakOptions): { rate: number
   };
 }
 
+function browserSegmentWeight(sentence: string): number {
+  const words = sentence.trim().split(/\s+/).filter(Boolean).length;
+  const commas = (sentence.match(/[,;:]/g) ?? []).length;
+  const dialogueTurns = (sentence.match(/[“”"]/g) ?? []).length / 2;
+  return Math.max(1, words + commas * 0.45 + dialogueTurns * 0.35 + 1.2);
+}
+
 function browserSpeak(text: string, options: SpeakOptions, generation = playbackGeneration): void {
-  const browserText = options.fallbackText?.replace(/\s+/g, " ").trim() || text;
+  const fallbackSource = options.fallbackText?.trim() || text.trim();
   if (!("speechSynthesis" in window)) {
     pendingSpeech = false;
     options.onError?.("이 브라우저는 음성 읽기를 지원하지 않습니다.");
     return;
   }
-  const voicePreset = options.voicePreset ?? "us-female";
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(browserText);
-  utterance.lang = presetLocale(voicePreset);
-  const performance = browserPerformance(browserText, options);
-  utterance.rate = performance.rate;
-  utterance.pitch = performance.pitch;
-  utterance.volume = performance.volume;
-  utterance.voice = getPreferredVoice(voicePreset) ?? null;
-  utterance.onstart = () => {
-    if (generation !== playbackGeneration) return;
-    pendingSpeech = false;
-    if (pauseRequested) window.speechSynthesis.pause();
-  };
-  utterance.onend = () => {
-    if (generation !== playbackGeneration) return;
+
+  const storySegments = options.kind === "story"
+    ? fallbackSource.split(/\n+/).map((item) => item.replace(/[\t ]+/g, " ").trim()).filter(Boolean)
+    : [];
+  const segments = storySegments.length > 0
+    ? storySegments
+    : [fallbackSource.replace(/\s+/g, " ").trim()].filter(Boolean);
+  if (!segments.length) {
     pendingSpeech = false;
     options.onEnd?.();
+    return;
+  }
+
+  const voicePreset = options.voicePreset ?? "us-female";
+  const startRatio = Math.max(0, Math.min(0.98, Number(options.startAtRatio ?? 0)));
+  const weights = segments.map(browserSegmentWeight);
+  const totalWeight = Math.max(1, weights.reduce((sum, value) => sum + value, 0));
+  const pauseBetweenSegments = options.kind === "story" ? 500 : 0;
+  let completedWeight = 0;
+
+  window.speechSynthesis.cancel();
+
+  const emitProgress = (segmentIndex: number, segmentProgress: number) => {
+    const before = weights.slice(0, segmentIndex).reduce((sum, value) => sum + value, 0);
+    const localRatio = Math.max(0, Math.min(1, (before + weights[segmentIndex] * segmentProgress) / totalWeight));
+    const fullRatio = startRatio + (1 - startRatio) * localRatio;
+    options.onTimeUpdate?.(fullRatio, 1);
   };
-  utterance.onerror = () => {
+
+  const speakSegment = (segmentIndex: number) => {
     if (generation !== playbackGeneration) return;
-    pendingSpeech = false;
-    options.onError?.("기기 음성 재생에 실패했습니다.");
+    if (segmentIndex >= segments.length) {
+      pendingSpeech = false;
+      options.onTimeUpdate?.(1, 1);
+      options.onEnd?.();
+      return;
+    }
+    if (pauseRequested) {
+      pendingSpeech = true;
+      browserSequenceResume = () => speakSegment(segmentIndex);
+      return;
+    }
+
+    browserSequenceResume = null;
+    const segment = segments[segmentIndex];
+    const utterance = new SpeechSynthesisUtterance(segment);
+    utterance.lang = presetLocale(voicePreset);
+    const performanceSettings = browserPerformance(segment, options);
+    utterance.rate = performanceSettings.rate;
+    utterance.pitch = performanceSettings.pitch;
+    utterance.volume = performanceSettings.volume;
+    utterance.voice = getPreferredVoice(voicePreset) ?? null;
+
+    let progressTimer: number | null = null;
+    let elapsedSeconds = 0;
+    let lastTickAt = 0;
+    let lastProgress = 0;
+    const wordCount = Math.max(1, segment.split(/\s+/).filter(Boolean).length);
+    const punctuationCount = (segment.match(/[,;:!?]/g) ?? []).length;
+    const estimatedDuration = Math.max(0.9, wordCount / Math.max(1, (155 * performanceSettings.rate) / 60) + punctuationCount * 0.12);
+
+    const stopProgressTimer = () => {
+      if (progressTimer) {
+        window.clearInterval(progressTimer);
+        progressTimer = null;
+      }
+    };
+    const updateProgress = (value: number) => {
+      lastProgress = Math.max(lastProgress, Math.min(0.98, value));
+      emitProgress(segmentIndex, lastProgress);
+    };
+
+    utterance.onstart = () => {
+      if (generation !== playbackGeneration) return;
+      pendingSpeech = false;
+      lastTickAt = performance.now();
+      emitProgress(segmentIndex, 0);
+      progressTimer = window.setInterval(() => {
+        if (generation !== playbackGeneration) {
+          stopProgressTimer();
+          return;
+        }
+        const now = performance.now();
+        if (!window.speechSynthesis.paused && !pauseRequested) {
+          elapsedSeconds += Math.max(0, now - lastTickAt) / 1000;
+          updateProgress(elapsedSeconds / estimatedDuration);
+        }
+        lastTickAt = now;
+      }, 160);
+      if (pauseRequested) window.speechSynthesis.pause();
+    };
+    utterance.onboundary = (event) => {
+      if (generation !== playbackGeneration || !segment.length) return;
+      updateProgress(event.charIndex / segment.length);
+    };
+    utterance.onend = () => {
+      stopProgressTimer();
+      if (generation !== playbackGeneration) return;
+      emitProgress(segmentIndex, 1);
+      completedWeight += weights[segmentIndex];
+      pendingSpeech = segmentIndex < segments.length - 1;
+      const continueSequence = () => speakSegment(segmentIndex + 1);
+      if (pauseRequested) {
+        browserSequenceResume = continueSequence;
+        return;
+      }
+      if (pauseBetweenSegments > 0 && segmentIndex < segments.length - 1) {
+        browserSequenceResume = continueSequence;
+        browserSequenceTimer = window.setTimeout(() => {
+          browserSequenceTimer = null;
+          browserSequenceResume = null;
+          continueSequence();
+        }, pauseBetweenSegments);
+      } else {
+        continueSequence();
+      }
+    };
+    utterance.onerror = () => {
+      stopProgressTimer();
+      if (generation !== playbackGeneration) return;
+      pendingSpeech = false;
+      options.onError?.("기기 음성 재생에 실패했습니다.");
+    };
+    window.speechSynthesis.speak(utterance);
   };
-  window.speechSynthesis.speak(utterance);
+
+  void completedWeight;
+  pendingSpeech = true;
+  speakSegment(0);
 }
 
 function base64ToBytes(base64: string): Uint8Array {

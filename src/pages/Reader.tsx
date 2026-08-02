@@ -13,11 +13,53 @@ interface Props { bookId: string; onBack: () => void; }
 
 function ReaderImage({ image, title, pageNumber, children }: { image?: Blob; title: string; pageNumber: number; children?: React.ReactNode }) {
   const url = useObjectUrl(image);
+  const fitAreaRef = useRef<HTMLDivElement | null>(null);
+  const [naturalSize, setNaturalSize] = useState({ width: 0, height: 0 });
+  const [displaySize, setDisplaySize] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    const area = fitAreaRef.current;
+    if (!area || naturalSize.width <= 0 || naturalSize.height <= 0) return;
+
+    const updateSize = () => {
+      const rect = area.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      const scale = Math.min(rect.width / naturalSize.width, rect.height / naturalSize.height);
+      setDisplaySize({
+        width: Math.max(1, Math.floor(naturalSize.width * scale)),
+        height: Math.max(1, Math.floor(naturalSize.height * scale)),
+      });
+    };
+
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(area);
+    window.addEventListener("orientationchange", updateSize);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("orientationchange", updateSize);
+    };
+  }, [naturalSize.height, naturalSize.width, url]);
+
   if (!url) return <div className="reader-empty-image">이미지를 불러오지 못했습니다.</div>;
+  const fittedStyle = displaySize.width > 0 && displaySize.height > 0
+    ? { width: `${displaySize.width}px`, height: `${displaySize.height}px` }
+    : undefined;
+
   return (
-    <div className="reader-image-frame">
-      <img className="reader-image" src={url} alt={`${title} ${pageNumber}페이지`} />
-      {children}
+    <div className="reader-image-fit-area" ref={fitAreaRef}>
+      <div className="reader-image-frame" style={fittedStyle}>
+        <img
+          className="reader-image"
+          src={url}
+          alt={`${title} ${pageNumber}페이지`}
+          onLoad={(event) => {
+            const target = event.currentTarget;
+            setNaturalSize({ width: target.naturalWidth, height: target.naturalHeight });
+          }}
+        />
+        {children}
+      </div>
     </div>
   );
 }
@@ -513,7 +555,7 @@ export default function Reader({ bookId, onBack }: Props) {
     const safeIndex = Math.max(0, Math.min(sentences.length - 1, index));
     const timeline = sentenceTimeline(sentences);
     const pageText = sentences.join("\n");
-    const fallbackText = sentences.slice(safeIndex).join(" ");
+    const fallbackText = sentences.slice(safeIndex).join("\n");
 
     storyIndexRef.current = safeIndex;
     setStorySentenceIndex(safeIndex);

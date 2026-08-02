@@ -1290,3 +1290,44 @@ body { min-height: 100dvh; }
   .completion-quiz-card { max-height: 96dvh; }
   .completion-question h2 { font-size: 18px; }
 }
+
+/* v3.6.1: always fit the complete original photo inside the study area. */
+.reader-image-fit-area {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.reader-image-fit-area .reader-image-frame {
+  position: relative;
+  flex: 0 0 auto;
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  line-height: 0;
+}
+.reader-image-fit-area .reader-image-frame .reader-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  object-fit: fill;
+}
+.reader-image-fit-area .coordinate-overlay { position: absolute; inset: 0; }
+.reader-page:not(.reader-fullscreen) .reader-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 6px;
+}
+.reader-fullscreen .reader-image-fit-area {
+  width: 100vw;
+  height: 100dvh;
+  background: #05090f;
+}
