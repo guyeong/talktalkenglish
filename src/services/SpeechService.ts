@@ -40,6 +40,28 @@ let pendingSpeech = false;
 let pausedAudioPosition = 0;
 let lastSpeechRequest: LastSpeechRequest | null = null;
 
+const GEMINI_TTS_COOLDOWN_KEY = "talktalk.geminiTtsCooldownUntil";
+const GEMINI_TTS_COOLDOWN_MS = 60 * 60 * 1000;
+let quotaNoticeShown = false;
+
+function geminiTtsCooldownUntil(): number {
+  try { return Number(localStorage.getItem(GEMINI_TTS_COOLDOWN_KEY) ?? 0) || 0; }
+  catch { return 0; }
+}
+
+function geminiTtsIsCoolingDown(): boolean {
+  return Date.now() < geminiTtsCooldownUntil();
+}
+
+function startGeminiTtsCooldown(): void {
+  try { localStorage.setItem(GEMINI_TTS_COOLDOWN_KEY, String(Date.now() + GEMINI_TTS_COOLDOWN_MS)); }
+  catch { /* localStorage may be unavailable in private browsing */ }
+}
+
+function isQuotaError(message: string): boolean {
+  return /무료 사용 한도|quota|rate limit|resource exhausted|429/i.test(message);
+}
+
 export function getEnglishVoices(): SpeechSynthesisVoice[] {
   if (!("speechSynthesis" in window)) return [];
   return window.speechSynthesis.getVoices().filter((voice) => voice.lang.toLowerCase().startsWith("en"));
@@ -270,7 +292,15 @@ async function geminiSpeak(text: string, options: SpeakOptions, generation: numb
   } catch (error) {
     if (generation !== playbackGeneration) return;
     const message = error instanceof Error ? error.message : "고음질 음성 생성에 실패했습니다.";
-    options.onError?.(`${message} 기기 음성으로 재생합니다.`);
+    if (isQuotaError(message)) {
+      startGeminiTtsCooldown();
+      if (!quotaNoticeShown) {
+        quotaNoticeShown = true;
+        options.onError?.("Gemini 음성 사용 한도에 도달해 1시간 동안 기기 음성으로 읽습니다.");
+      }
+    } else {
+      options.onError?.(`${message} 기기 음성으로 재생합니다.`);
+    }
     pendingSpeech = true;
     browserSpeak(text, options, generation);
   }
@@ -281,8 +311,17 @@ function startSpeech(cleanText: string, options: SpeakOptions): void {
   lastSpeechRequest = { text: cleanText, options };
   const generation = playbackGeneration;
   pendingSpeech = true;
-  if ((options.engine ?? "gemini") === "gemini") void geminiSpeak(cleanText, options, generation);
-  else browserSpeak(cleanText, options, generation);
+  if ((options.engine ?? "gemini") === "gemini") {
+    if (!geminiTtsIsCoolingDown()) {
+      void geminiSpeak(cleanText, options, generation);
+      return;
+    }
+    if (!quotaNoticeShown) {
+      quotaNoticeShown = true;
+      options.onError?.("Gemini 음성 사용 한도에 도달해 1시간 동안 기기 음성으로 읽습니다.");
+    }
+  }
+  browserSpeak(cleanText, options, generation);
 }
 
 export function speakText(text: string, options: SpeakOptions = {}): void {

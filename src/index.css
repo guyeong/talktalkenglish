@@ -928,3 +928,59 @@ body { min-height: 100dvh; }
   .reader-page:not(.reader-fullscreen) .reading-toolbar .narration-control,
   .reader-page:not(.reader-fullscreen) .reading-toolbar .speed-control { grid-column: span 2; }
 }
+
+
+/* v3.3: compact non-blocking speech notice and Gemini TTS quota cooldown */
+.reader-page:not(.reader-fullscreen) > .speech-notice {
+  position: fixed;
+  top: auto !important;
+  left: auto !important;
+  right: max(12px, env(safe-area-inset-right));
+  bottom: max(12px, env(safe-area-inset-bottom));
+  z-index: 80;
+  width: min(390px, calc(100vw - 24px));
+  max-width: none;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  padding: 10px 10px 10px 12px;
+  transform: none !important;
+  border: 1px solid #c9dcfa;
+  border-radius: 14px;
+  color: #28558d;
+  background: rgba(238,245,255,.97);
+  text-align: left;
+  font-size: 12.5px;
+  line-height: 1.4;
+  font-weight: 750;
+  box-shadow: 0 12px 30px rgba(37,76,126,.2);
+  pointer-events: auto !important;
+  backdrop-filter: blur(10px);
+}
+.speech-notice-icon { font-size: 15px; }
+.speech-notice-text { min-width: 0; }
+.speech-notice-close {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  color: #315b8f;
+  background: rgba(255,255,255,.72);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.speech-notice-close:hover { background: white; }
+@media (max-width: 600px) {
+  .reader-page:not(.reader-fullscreen) > .speech-notice {
+    right: max(8px, env(safe-area-inset-right));
+    bottom: max(8px, env(safe-area-inset-bottom));
+    width: calc(100vw - 16px);
+    font-size: 12px;
+  }
+}

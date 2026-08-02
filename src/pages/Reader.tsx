@@ -85,8 +85,14 @@ export default function Reader({ bookId, onBack }: Props) {
   }
 
   function handleSpeechError(message: string) {
-    setSpeechNotice(message);
+    setSpeechNotice((current) => current === message ? current : message);
   }
+
+  useEffect(() => {
+    if (!speechNotice) return;
+    const timer = window.setTimeout(() => setSpeechNotice(""), 4500);
+    return () => window.clearTimeout(timer);
+  }, [speechNotice]);
 
   useEffect(() => {
     let active = true;
@@ -792,7 +798,13 @@ export default function Reader({ bookId, onBack }: Props) {
           </section>
 
           {analysisError && <p className="analysis-error" role="alert">{analysisError}</p>}
-          {speechNotice && <p className="speech-notice" role="status">{speechNotice}</p>}
+          {speechNotice && (
+            <div className="speech-notice" role="status" aria-live="polite">
+              <span className="speech-notice-icon" aria-hidden="true">ℹ️</span>
+              <span className="speech-notice-text">{speechNotice}</span>
+              <button className="speech-notice-close" type="button" onClick={() => setSpeechNotice("")} aria-label="알림 닫기">×</button>
+            </div>
+          )}
           {!currentText && !analysisError && <p className="reader-help">“현재 페이지 인식” 또는 “미분석 페이지 모두”를 누르면 문장과 단어 위치를 자동으로 찾습니다. 두 쪽이 함께 찍힌 사진은 좌우로 나눠 빠르게 분석합니다.</p>}
           {analysis && <p className="reader-help">파란 단어 영역을 누르면 단어 발음, 문장 영역을 누르면 문장 전체 발음이 재생됩니다.</p>}
 
