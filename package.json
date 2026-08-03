@@ -1,7 +1,7 @@
 {
   "name": "talktalkenglish",
   "private": true,
-  "version": "3.6.2",
+  "version": "3.7.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -14,8 +14,7 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-dropzone": "^19.2.0",
-    "uuid": "^14.0.1",
-    "@google/genai": "^1.30.0"
+    "uuid": "^14.0.1"
   },
   "devDependencies": {
     "@types/node": "^24.13.3",

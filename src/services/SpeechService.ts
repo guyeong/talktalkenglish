@@ -3,7 +3,7 @@ import { db } from "../db/database";
 export type SpeechEngine = "gemini" | "browser";
 export type SpeechKind = "word" | "sentence" | "story";
 export type VoicePreset = "us-female" | "us-male" | "uk-male" | "au-female";
-export type NarrationStyle = "clear" | "reference" | "storybook" | "theater";
+export type NarrationStyle = "clear" | "reference" | "storybook" | "theater" | "elevenlabs-theater";
 
 export const VOICE_PRESETS: Array<{ id: VoicePreset; label: string; locale: string }> = [
   { id: "us-female", label: "미국식 · 여자", locale: "en-US" },
@@ -17,6 +17,7 @@ export const NARRATION_STYLES: Array<{ id: NarrationStyle; label: string; descri
   { id: "reference", label: "교재 음원처럼", description: "업로드한 학교 음원의 차분한 속도, 강세와 문장 억양을 참고합니다." },
   { id: "storybook", label: "동화책처럼", description: "따뜻한 내레이션과 대화체 억양을 확실히 구분합니다." },
   { id: "theater", label: "연극처럼", description: "속삭임·놀람·긴장·외침을 크게 살려 연기합니다." },
+  { id: "elevenlabs-theater", label: "ElevenLabs 프리미엄 연극", description: "Eleven v3 무료 크레딧으로 감정과 등장인물 연기를 가장 강하게 표현합니다." },
 ];
 
 export interface SpeakOptions {
@@ -59,7 +60,9 @@ const GEMINI_TTS_WINDOW_MS = 60_000;
 const GEMINI_TTS_MAX_REQUESTS_PER_WINDOW = 3;
 const GEMINI_TTS_CACHE_LIMIT_BYTES = 120 * 1024 * 1024;
 const GEMINI_TTS_CACHE_LIMIT_ENTRIES = 160;
+const ELEVENLABS_TTS_COOLDOWN_KEY = "talktalk.elevenlabsTtsCooldownUntil";
 let quotaNoticeShown = false;
+let elevenLabsNoticeShown = false;
 
 class GeminiTtsError extends Error {
   status: number;
@@ -116,6 +119,34 @@ function clearGeminiTtsCooldown(): void {
   writeNumber(GEMINI_TTS_COOLDOWN_KEY, 0);
   writeNumber(GEMINI_TTS_FAILURES_KEY, 0);
   quotaNoticeShown = false;
+}
+
+function isElevenLabsNarration(options: SpeakOptions): boolean {
+  return options.narrationStyle === "elevenlabs-theater";
+}
+
+function elevenLabsTtsCooldownUntil(): number {
+  return readNumber(ELEVENLABS_TTS_COOLDOWN_KEY);
+}
+
+function elevenLabsTtsIsCoolingDown(): boolean {
+  const until = elevenLabsTtsCooldownUntil();
+  if (until <= Date.now()) {
+    elevenLabsNoticeShown = false;
+    return false;
+  }
+  return true;
+}
+
+function startElevenLabsTtsCooldown(seconds = 300): number {
+  const safeSeconds = Math.max(60, Math.min(24 * 60 * 60, Number(seconds) || 300));
+  writeNumber(ELEVENLABS_TTS_COOLDOWN_KEY, Date.now() + safeSeconds * 1000);
+  return safeSeconds;
+}
+
+function clearElevenLabsTtsCooldown(): void {
+  writeNumber(ELEVENLABS_TTS_COOLDOWN_KEY, 0);
+  elevenLabsNoticeShown = false;
 }
 
 function recentGeminiRequests(): number[] {
@@ -345,7 +376,7 @@ function browserPerformance(text: string, options: SpeakOptions): { rate: number
     if (/laugh|giggl|happy|delighted/.test(lower)) { pitch += 0.14; rate *= 1.04; }
   }
 
-  if (style === "theater") {
+  if (style === "theater" || style === "elevenlabs-theater") {
     if (quoted) { pitch += 0.2; rate *= 0.94; }
     if (question) { pitch += 0.17; rate *= 0.92; }
     if (exclamation) { pitch += 0.19; rate *= 1.08; }
@@ -542,7 +573,8 @@ function speechCacheKey(text: string, options: SpeakOptions): string {
   const kind = options.kind ?? "sentence";
   const voicePreset = options.voicePreset ?? "us-female";
   const narrationStyle = options.narrationStyle ?? "clear";
-  return `tts-v3|${voicePreset}|${kind}|${narrationStyle}|${hashCacheText(text)}|${text.length}`;
+  const provider = narrationStyle === "elevenlabs-theater" ? "elevenlabs-v3" : "gemini";
+  return `tts-v4|${provider}|${voicePreset}|${kind}|${narrationStyle}|${hashCacheText(text)}|${text.length}`;
 }
 
 async function trimPersistentAudioCache(): Promise<void> {
@@ -601,7 +633,7 @@ async function savePersistentAudio(cacheKey: string, blob: Blob, options: SpeakO
   }
 }
 
-async function requestGeminiAudio(text: string, options: SpeakOptions): Promise<string> {
+async function requestHighQualityAudio(text: string, options: SpeakOptions): Promise<string> {
   const kind = options.kind ?? "sentence";
   const voicePreset = options.voicePreset ?? "us-female";
   const narrationStyle = options.narrationStyle ?? "clear";
@@ -609,20 +641,46 @@ async function requestGeminiAudio(text: string, options: SpeakOptions): Promise<
   const cached = await getPersistentAudioUrl(cacheKey);
   if (cached) return cached;
 
-  reserveGeminiRequestSlot();
-  const response = await fetch("/api/tts", {
+  const useElevenLabs = narrationStyle === "elevenlabs-theater";
+  if (!useElevenLabs) reserveGeminiRequestSlot();
+
+  const endpoint = useElevenLabs ? "/api/elevenlabs-tts" : "/api/tts";
+  const response = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text, rate: 1, kind, voicePreset, narrationStyle }),
   });
+
+  if (useElevenLabs) {
+    if (!response.ok) {
+      const raw = await response.text();
+      let payload: { error?: string; retryAfterSeconds?: number } = {};
+      try { payload = raw ? JSON.parse(raw) : {}; }
+      catch { /* use raw response below */ }
+      throw new GeminiTtsError(
+        payload.error || raw || `ElevenLabs 음성 요청 실패 (${response.status})`,
+        response.status,
+        Number(payload.retryAfterSeconds ?? response.headers.get("retry-after") ?? 0),
+      );
+    }
+    const blob = await response.blob();
+    if (!blob.size) throw new GeminiTtsError("ElevenLabs가 음성 데이터를 반환하지 않았습니다.", 502);
+    const normalizedBlob = blob.type ? blob : new Blob([blob], { type: "audio/mpeg" });
+    const url = URL.createObjectURL(normalizedBlob);
+    audioCache.set(cacheKey, url);
+    await savePersistentAudio(cacheKey, normalizedBlob, options);
+    clearElevenLabsTtsCooldown();
+    return url;
+  }
+
   const raw = await response.text();
   let payload: { data?: string; mimeType?: string; error?: string; retryAfterSeconds?: number } = {};
   try { payload = raw ? JSON.parse(raw) : {}; }
-  catch { throw new GeminiTtsError(raw || `고음질 음성 요청 실패 (${response.status})`, response.status); }
+  catch { throw new GeminiTtsError(raw || `Gemini 음성 요청 실패 (${response.status})`, response.status); }
 
   if (!response.ok || !payload.data) {
     throw new GeminiTtsError(
-      payload.error || `고음질 음성 요청 실패 (${response.status})`,
+      payload.error || `Gemini 음성 요청 실패 (${response.status})`,
       response.status,
       Number(payload.retryAfterSeconds ?? response.headers.get("retry-after") ?? 0),
     );
@@ -630,8 +688,8 @@ async function requestGeminiAudio(text: string, options: SpeakOptions): Promise<
 
   const mimeType = payload.mimeType ?? "audio/L16;rate=24000";
   const bytes = base64ToBytes(payload.data);
-  const blob = mimeType.includes("wav")
-    ? new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], { type: "audio/wav" })
+  const blob = /audio\/(wav|mpeg|mp3|ogg|webm|aac|mp4)/i.test(mimeType)
+    ? new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], { type: mimeType })
     : pcmToWavBlob(bytes, Number(mimeType.match(/rate=(\d+)/)?.[1] ?? 24000));
   const url = URL.createObjectURL(blob);
   audioCache.set(cacheKey, url);
@@ -642,7 +700,7 @@ async function requestGeminiAudio(text: string, options: SpeakOptions): Promise<
 
 async function geminiSpeak(text: string, options: SpeakOptions, generation: number): Promise<void> {
   try {
-    const url = await requestGeminiAudio(text, options);
+    const url = await requestHighQualityAudio(text, options);
     if (generation !== playbackGeneration) return;
     const request = lastSpeechRequest ?? { text, options };
     request.audioUrl = url;
@@ -669,7 +727,22 @@ async function geminiSpeak(text: string, options: SpeakOptions, generation: numb
   } catch (error) {
     if (generation !== playbackGeneration) return;
     const message = error instanceof Error ? error.message : "고음질 음성 생성에 실패했습니다.";
-    if (isQuotaError(message) || (error instanceof GeminiTtsError && error.status === 429)) {
+    const useElevenLabs = isElevenLabsNarration(options);
+    const status = error instanceof GeminiTtsError ? error.status : 0;
+    const looksLimited = isQuotaError(message) || status === 429 || status === 402;
+    if (useElevenLabs) {
+      if (looksLimited) {
+        const retryAfterSeconds = error instanceof GeminiTtsError ? error.retryAfterSeconds : 300;
+        const cooldownSeconds = startElevenLabsTtsCooldown(retryAfterSeconds || 300);
+        if (!elevenLabsNoticeShown) {
+          elevenLabsNoticeShown = true;
+          const wait = cooldownSeconds >= 120 ? `${Math.ceil(cooldownSeconds / 60)}분` : `${cooldownSeconds}초`;
+          options.onError?.(`ElevenLabs 무료 사용량 또는 요청 제한에 도달해 기기 음성으로 재생합니다. 약 ${wait} 후 다시 시도합니다.`);
+        }
+      } else {
+        options.onError?.(`${message} 기기 음성으로 재생합니다.`);
+      }
+    } else if (looksLimited) {
       const retryAfterSeconds = error instanceof GeminiTtsError ? error.retryAfterSeconds : 65;
       const cooldownSeconds = startGeminiTtsCooldown(retryAfterSeconds);
       if (!quotaNoticeShown) {
@@ -691,15 +764,28 @@ function startSpeech(cleanText: string, options: SpeakOptions): void {
   const generation = playbackGeneration;
   pendingSpeech = true;
   if ((options.engine ?? "gemini") === "gemini") {
-    if (!geminiTtsIsCoolingDown()) {
-      void geminiSpeak(cleanText, options, generation);
-      return;
-    }
-    if (!quotaNoticeShown) {
-      quotaNoticeShown = true;
-      const remainingSeconds = Math.max(1, Math.ceil((geminiTtsCooldownUntil() - Date.now()) / 1000));
-      const wait = remainingSeconds >= 120 ? `${Math.ceil(remainingSeconds / 60)}분` : `${remainingSeconds}초`;
-      options.onError?.(`Gemini 요청이 잠시 많아 기기 음성으로 재생합니다. 약 ${wait} 후 고품질 음성을 다시 사용할 수 있습니다.`);
+    if (isElevenLabsNarration(options)) {
+      if (!elevenLabsTtsIsCoolingDown()) {
+        void geminiSpeak(cleanText, options, generation);
+        return;
+      }
+      if (!elevenLabsNoticeShown) {
+        elevenLabsNoticeShown = true;
+        const remainingSeconds = Math.max(1, Math.ceil((elevenLabsTtsCooldownUntil() - Date.now()) / 1000));
+        const wait = remainingSeconds >= 120 ? `${Math.ceil(remainingSeconds / 60)}분` : `${remainingSeconds}초`;
+        options.onError?.(`ElevenLabs 무료 사용량 제한으로 기기 음성을 사용합니다. 약 ${wait} 후 다시 시도합니다.`);
+      }
+    } else {
+      if (!geminiTtsIsCoolingDown()) {
+        void geminiSpeak(cleanText, options, generation);
+        return;
+      }
+      if (!quotaNoticeShown) {
+        quotaNoticeShown = true;
+        const remainingSeconds = Math.max(1, Math.ceil((geminiTtsCooldownUntil() - Date.now()) / 1000));
+        const wait = remainingSeconds >= 120 ? `${Math.ceil(remainingSeconds / 60)}분` : `${remainingSeconds}초`;
+        options.onError?.(`Gemini 요청이 잠시 많아 기기 음성으로 재생합니다. 약 ${wait} 후 고품질 음성을 다시 사용할 수 있습니다.`);
+      }
     }
   }
   browserSpeak(cleanText, options, generation);
